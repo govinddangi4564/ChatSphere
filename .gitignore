@@ -1,9 +1,36 @@
-# Environment Variables
+# ========================================================
+# ChatSphere .gitignore
+# ========================================================
+
+# Environment Variables & Secrets
 .env
 .env.local
 .env.*.local
+.env.dev
+.env.prod
+!.env.example
 
-# Compiled output
+# Local Spring Boot & Application Credentials
+application-local.properties
+application-secret.properties
+*-local.properties
+*.local.properties
+*.secret.properties
+secrets.properties
+credentials.json
+service-account*.json
+
+# Keystores, Certificates & Cryptographic Keys
+*.pem
+*.key
+*.p12
+*.jks
+*.crt
+*.der
+*.id_rsa
+*.id_dsa
+
+# Compiled Output & Build Artifacts
 target/
 dist/
 dist-ssr/
@@ -18,10 +45,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Node dependencies
+# Node Dependencies
 node_modules/
 
-# OS and Editor files
+# OS and Editor Specific Files
 .DS_Store
 Thumbs.db
 .idea/
@@ -33,6 +60,6 @@ Thumbs.db
 *.sln
 *.sw?
 
-# Crash reports
+# Crash Reports & Dumps
 hs_err_pid*
 replay_pid*
