@@ -3,6 +3,8 @@ package com.chatsphere.health;
 import com.chatsphere.health.controller.HealthController;
 import com.chatsphere.health.dto.HealthResponse;
 import com.chatsphere.health.service.HealthService;
+import com.chatsphere.security.CustomUserDetailsService;
+import com.chatsphere.security.JwtService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -25,6 +27,12 @@ class HealthControllerTest {
 
     @MockBean
     private HealthService healthService;
+
+    @MockBean
+    private JwtService jwtService;
+
+    @MockBean
+    private CustomUserDetailsService userDetailsService;
 
     @Test
     @WithMockUser

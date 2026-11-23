@@ -5,7 +5,8 @@
 | Phase | Description | Status |
 | :--- | :--- | :--- |
 | **Phase 1** | Foundation (Spring Boot 3.3.9, React 18 + Vite, MySQL 8 Docker, Health API, Flyway) | Completed |
-| **Phase 2** | User Authentication (JWT, Refresh Tokens, BCrypt, Auth Pages) | Pending |
+| **Phase 2A**| Authentication Backend (Users, Refresh Tokens, Email Verification, BCrypt, JWT, Security) | Completed |
+| **Phase 2B**| Authentication Frontend (React Auth Context, Login, Register, Password Reset Pages) | Pending |
 | **Phase 3** | User Management & Profile (Contacts, Blocking, Privacy Settings) | Pending |
 | **Phase 4** | Private Conversations (Membership, Pagination, Conversation List) | Pending |
 | **Phase 5** | Real-Time Messaging (WebSocket, STOMP, Message Receipts) | Pending |
@@ -19,56 +20,65 @@
 
 ---
 
-## Phase 1 Progress Details
+## Phase 2A Progress Details (Auth Backend)
 
 ### Completed Features
-- **Project Structure**: Established modular directory layout adhering to Section 3 (`chatsphere-backend`, `chatsphere-frontend`, `docker`, `docs`).
-- **Database & Docker**: Configured `docker/docker-compose.yml` for MySQL 8 with healthchecks, utf8mb4 collation, and `.env.example` template.
-- **Backend Architecture**:
-  - Spring Boot 3.3.9 foundation with Spring Web, Data JPA, Security, Actuator, Flyway, MySQL driver, and Springdoc OpenAPI.
-  - Profiles configured: `application.properties`, `application-dev.properties`, `application-prod.properties`.
-  - Flyway baseline migration `V1__init_baseline.sql` configured with Hibernate `ddl-auto=validate`.
-  - Generic `ApiResponse<T>` and `ErrorResponse` DTO records.
-  - `GlobalExceptionHandler` with `@RestControllerAdvice` mapping bad requests, validation errors, and 404s.
-  - Centralized CORS configuration allowing `http://localhost:5173` with credentials.
-  - Spring Security permitting `/api/health`, `/swagger-ui/**`, and `/v3/api-docs/**`.
-  - `HealthService` and `HealthController` exposing `GET /api/health` validating database connectivity.
-- **Frontend Architecture**:
-  - React 18 + Vite setup with Bootstrap 5, Bootstrap Icons, and ChatSphere palette.
-  - Centralized Axios service layer with interceptors.
-  - `HealthCheckPage` with live health monitoring and refresh capability.
-- **Documentation**: Initialized `README.md`, `architecture.md`, `database-design.md`, `api-documentation.md`, `websocket-documentation.md`, and `development-progress.md`.
+- **Database & Migrations**:
+  - `V2__auth_schema.sql` created: tables `users`, `refresh_tokens`, `email_verification_tokens` with UUID `public_id`, unique constraints on username and email, foreign keys with cascade deletion, and indexing.
+- **Domain & DTOs**:
+  - `User`, `RefreshToken`, `EmailVerificationToken` JPA entities with Lombok.
+  - Enums `AccountStatus` (`ACTIVE`, `SUSPENDED`, `DEACTIVATED`) and `TokenType` (`EMAIL_VERIFICATION`, `PASSWORD_RESET`).
+  - Java record DTOs: `RegisterRequest`, `LoginRequest`, `AuthResponse`, `ForgotPasswordRequest`, `ResetPasswordRequest`, `VerifyEmailRequest`, `UserResponse`.
+  - Manual `UserMapper` utility (no MapStruct, never exposes internal database IDs or passwords).
+- **Security & JWT**:
+  - `JwtService` implementing token generation, expiration verification, and claim extraction with JJWT 0.12.6.
+  - `CustomUserDetailsService` loading user by username or email.
+  - `JwtAuthenticationFilter` verifying Bearer tokens and configuring `SecurityContextHolder`.
+  - `SecurityConfig` with `BCryptPasswordEncoder(12)`, stateless session management, custom 401 `AuthenticationEntryPoint` and 403 `AccessDeniedHandler` with standard `ErrorResponse`.
+- **Services & Controllers**:
+  - `EmailService` with configuration toggle (`app.mail.enabled`) and safe dev console logging of verification/reset links.
+  - `AuthService` (single class):
+    - Registration with password hashing and verification token generation.
+    - Login with BCrypt validation, JWT access token, and SHA-256 hashed refresh token storage.
+    - Refresh token rotation (revokes old token, revokes all sessions on compromised reuse, issues new token).
+    - Logout (revokes active refresh token and clears cookie).
+    - Email verification and password reset workflows.
+  - `AuthController` exposing all endpoints with Swagger documentation and setting HttpOnly SameSite cookies.
+- **Exceptions**:
+  - `UnauthorizedException`, `ConflictException`, `TokenExpiredException` handled in `GlobalExceptionHandler`.
 
 ### Real Test Results
-- **Backend Build (`mvnw clean verify`)**: 
-  - `ChatSphereApplicationTests`: PASSED (ApplicationContext loads successfully).
-  - `HealthControllerTest`: PASSED (MockMvc unit test validating `/api/health` contract).
-  - `HealthControllerIntegrationTest`: PASSED (Real embedded Tomcat integration test on dynamic port verifying HTTP 200, JSON structure, and database health check).
-  - Total tests run: 3, Failures: 0, Errors: 0, Skipped: 0.
-- **Frontend Build (`npm run build`)**:
-  - Vite production build successful (0 errors, 95 modules transformed, production bundles generated).
+- **Backend Build (`mvnw clean verify`)**:
+  - `AuthServiceTest` (9 tests):
+    - `register_Success`: PASSED
+    - `register_DuplicateUsername_ThrowsConflict`: PASSED
+    - `register_DuplicateEmail_ThrowsConflict`: PASSED
+    - `login_Success`: PASSED
+    - `login_WrongPassword_ThrowsUnauthorized`: PASSED
+    - `login_NonExistentUser_ThrowsUnauthorized`: PASSED
+    - `refreshToken_Success_RotatesToken`: PASSED
+    - `refreshToken_RevokedToken_ThrowsUnauthorizedAndRevokesAll`: PASSED
+    - `logout_RevokesToken`: PASSED
+  - `AuthControllerIntegrationTest`: PASSED (Full HTTP lifecycle on embedded Tomcat: registration -> login -> /api/health access with Bearer token -> refresh token rotation via cookie -> old token rejection -> logout).
+  - `HealthControllerTest`: PASSED
+  - `HealthControllerIntegrationTest`: PASSED
+  - `ChatSphereApplicationTests`: PASSED
+  - **Total Tests: 13, Failures: 0, Errors: 0, Skipped: 0.**
+- **Frontend Build (`npm run build`)**: PASSED (0 errors).
 
 ### Known Bugs
 - None.
 
 ### Manual Verification Instructions
-1. Ensure Docker Desktop is running and launch MySQL:
-   ```bash
-   docker compose -f docker/docker-compose.yml up -d
-   ```
-2. Run backend:
-   ```bash
+1. Run backend:
+   ```powershell
    cd chatsphere-backend
    .\mvnw.cmd spring-boot:run
    ```
-3. Test backend health endpoint:
-   ```bash
-   curl http://localhost:8080/api/health
-   ```
-   Open Swagger documentation in browser: `http://localhost:8080/swagger-ui.html`.
-4. Run frontend:
-   ```bash
-   cd chatsphere-frontend
-   npm run dev
-   ```
-   Open `http://localhost:5173` in browser to view the health monitor UI.
+2. Open Swagger OpenAPI UI: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
+3. Test endpoints:
+   - Register a user via `POST /api/auth/register`
+   - Observe the verification link output safely in the backend console log
+   - Log in via `POST /api/auth/login` and check the returned JWT and HttpOnly `chatsphere_refresh_token` cookie
+   - Call `POST /api/auth/refresh` to verify token rotation
+   - Call `POST /api/auth/logout` to verify cookie clearing
