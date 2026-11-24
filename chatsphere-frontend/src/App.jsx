@@ -10,6 +10,9 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import VerifyEmailPage from './pages/VerifyEmailPage';
 import HomePage from './pages/HomePage';
+import ProfilePage from './pages/ProfilePage';
+import SettingsPage from './pages/SettingsPage';
+import ContactsPage from './pages/ContactsPage';
 import HealthCheckPage from './pages/HealthCheckPage';
 
 export default function App() {
@@ -54,12 +57,36 @@ export default function App() {
             <Route path="/verify-email" element={<VerifyEmailPage />} />
           </Route>
 
-          {/* Protected Home Route */}
+          {/* Protected Routes */}
           <Route
             path="/"
             element={
               <ProtectedRoute>
                 <HomePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <ProfilePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <SettingsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/contacts"
+            element={
+              <ProtectedRoute>
+                <ContactsPage />
               </ProtectedRoute>
             }
           />
