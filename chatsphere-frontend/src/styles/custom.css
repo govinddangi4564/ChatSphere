@@ -160,3 +160,114 @@ body.dark-mode .nav-tabs .nav-link.active {
   overflow: hidden;
   object-fit: cover;
 }
+
+
+/* WhatsApp-style Chat Layout */
+.chat-container {
+  height: calc(100vh - 62px);
+  background-color: var(--light-bg);
+  overflow: hidden;
+}
+
+body.dark-mode .chat-container {
+  background-color: var(--dark-bg);
+}
+
+.chat-sidebar {
+  width: 380px;
+  min-width: 320px;
+  border-right: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  background-color: #ffffff;
+  height: 100%;
+}
+
+body.dark-mode .chat-sidebar {
+  background-color: #111b21;
+  border-right-color: #222e35;
+}
+
+.chat-main {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: #efeae2;
+  background-image: radial-gradient(#d1d7db 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+body.dark-mode .chat-main {
+  background-color: #0b141a;
+  background-image: radial-gradient(#182229 1px, transparent 1px);
+}
+
+.conversation-item {
+  cursor: pointer;
+  transition: background-color 0.15s ease-in-out;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+body.dark-mode .conversation-item {
+  border-bottom-color: #222e35;
+}
+
+.conversation-item:hover {
+  background-color: #f8fafc;
+}
+
+body.dark-mode .conversation-item:hover {
+  background-color: #202c33;
+}
+
+.conversation-item.active {
+  background-color: #f1f5f9;
+}
+
+body.dark-mode .conversation-item.active {
+  background-color: #2a3942;
+}
+
+.unread-badge {
+  background-color: var(--accent-color);
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: 12px;
+  padding: 2px 7px;
+}
+
+.chat-header {
+  height: 60px;
+  background-color: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+}
+
+body.dark-mode .chat-header {
+  background-color: #202c33;
+  border-bottom-color: #2a3942;
+}
+
+.chat-messages {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.chat-footer {
+  height: 62px;
+  background-color: #f0f2f5;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+}
+
+body.dark-mode .chat-footer {
+  background-color: #202c33;
+  border-top-color: #2a3942;
+}

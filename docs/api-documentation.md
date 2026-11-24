@@ -373,3 +373,124 @@
 - **Endpoint:** `DELETE /api/contacts/{publicId}`
 - **Access:** Authenticated
 - **Response (`200 OK`):** `{ "success": true, "message": "Contact removed successfully", "data": null }`
+
+
+---
+
+## 5. Conversations APIs (`/api/conversations`)
+
+### Create or Find Private Conversation
+- **Endpoint:** `POST /api/conversations/private`
+- **Access:** Authenticated
+- **Rules:**
+  - Idempotent: returns existing 1-on-1 conversation if one already exists.
+  - Enforces database-level duplicate prevention via unique `private_pair_hash`.
+  - Rejects self-conversations (`400 BAD_REQUEST`).
+  - Enforces bidirectional block rules (`404 NOT_FOUND`).
+- **Request Body (`CreatePrivateConversationRequest`):**
+```json
+{
+  "recipientPublicId": "550e8400-e29b-41d4-a716-446655440001"
+}
+```
+- **Response (`201 CREATED`):**
+```json
+{
+  "success": true,
+  "message": "Conversation retrieved successfully",
+  "data": {
+    "publicId": "732e6423-a808-4e36-93d3-13ab18b958e0",
+    "type": "PRIVATE",
+    "title": "Bob Jones",
+    "imageUrl": "https://example.com/bob.jpg",
+    "createdAt": "2026-11-24T20:00:00Z",
+    "lastMessageAt": null,
+    "participants": [
+      {
+        "publicId": "550e8400-e29b-41d4-a716-446655440000",
+        "fullName": "Alice Smith",
+        "username": "alice",
+        "profileImageUrl": null,
+        "lastSeenAt": "2026-11-24T21:40:00Z",
+        "role": "MEMBER"
+      },
+      {
+        "publicId": "550e8400-e29b-41d4-a716-446655440001",
+        "fullName": "Bob Jones",
+        "username": "bob",
+        "profileImageUrl": "https://example.com/bob.jpg",
+        "lastSeenAt": "2026-11-24T21:35:00Z",
+        "role": "MEMBER"
+      }
+    ],
+    "muted": false,
+    "archived": false,
+    "unreadCount": 0,
+    "role": "MEMBER"
+  }
+}
+```
+
+### List Conversations
+- **Endpoint:** `GET /api/conversations?page=0&size=20&sort=lastMessageAt,desc&type=PRIVATE&archived=false&muted=false&unread=false`
+- **Access:** Authenticated
+- **Rules:**
+  - Whitelisted sort fields: `lastMessageAt`, `createdAt`, `title`.
+  - Pagination limits: max `size` = 50.
+  - Optional filters: `type` (`PRIVATE`, `GROUP`), `archived` (`true`/`false`), `muted` (`true`/`false`), `unread` (`true`/`false`).
+  - Batch-loads participants in a single query to eliminate N+1 overhead.
+- **Response (`200 OK`):**
+```json
+{
+  "success": true,
+  "message": "Conversations retrieved successfully",
+  "data": {
+    "content": [
+      {
+        "publicId": "732e6423-a808-4e36-93d3-13ab18b958e0",
+        "type": "PRIVATE",
+        "title": "Bob Jones",
+        "imageUrl": "https://example.com/bob.jpg",
+        "lastMessageAt": null,
+        "lastMessagePreview": null,
+        "unreadCount": 0,
+        "muted": false,
+        "archived": false,
+        "participant": {
+          "publicId": "550e8400-e29b-41d4-a716-446655440001",
+          "fullName": "Bob Jones",
+          "username": "bob",
+          "profileImageUrl": "https://example.com/bob.jpg",
+          "lastSeenAt": "2026-11-24T21:35:00Z",
+          "role": "MEMBER"
+        }
+      }
+    ],
+    "pagination": {
+      "page": 0,
+      "size": 20,
+      "totalElements": 1,
+      "totalPages": 1,
+      "hasNext": false,
+      "hasPrevious": false
+    }
+  }
+}
+```
+
+### Get Conversation Details
+- **Endpoint:** `GET /api/conversations/{publicId}`
+- **Access:** Authenticated (caller must be an active member, returns 404/403 otherwise).
+- **Response (`200 OK`):** Full conversation details and participant list.
+
+### Archive Conversation
+- **Endpoint:** `PUT /api/conversations/{publicId}/archive`
+- **Access:** Authenticated
+- **Request Body (`ArchiveRequest`):** `{ "archived": true }`
+- **Response (`200 OK`):** `{ "success": true, "message": "Conversation archived", "data": null }`
+
+### Mute Conversation
+- **Endpoint:** `PUT /api/conversations/{publicId}/mute`
+- **Access:** Authenticated
+- **Request Body (`MuteRequest`):** `{ "muted": true }`
+- **Response (`200 OK`):** `{ "success": true, "message": "Conversation muted", "data": null }`

@@ -8,7 +8,7 @@
 | **Phase 2A**| Authentication Backend (Users, Refresh Tokens, Email Verification, BCrypt, JWT, Security) | Completed |
 | **Phase 2B**| Authentication Frontend (React Auth Context, Login, Register, Password Reset Pages, Guards) | Completed |
 | **Phase 3** | User Management & Profile (Contacts, Blocking, Privacy Settings) | Completed |
-| **Phase 4** | Private Conversations (Membership, Pagination, Conversation List) | Pending |
+| **Phase 4** | Private Conversations (Membership, Pagination, Conversation List) | Completed |
 | **Phase 5** | Real-Time Messaging (WebSocket, STOMP, Message Receipts) | Pending |
 | **Phase 6** | Group Messaging (Group Management, Permissions, Roles) | Pending |
 | **Phase 7** | Attachments (Cloudinary Storage, Media Previews) | Pending |
@@ -137,3 +137,49 @@
 
 ### Next Steps
 - Phase 4: Private Conversations (conversation creation, idempotency, conversation listing, pagination, and membership).
+
+
+---
+
+## Phase 4 Progress Details (Private Conversations)
+
+### Completed Features
+- **Database Schema**:
+  - `V4__conversations_schema.sql`: Created `conversations` and `conversation_members` tables.
+  - Enforced mathematical duplicate prevention at the database level using `private_pair_hash VARCHAR(50) UNIQUE NULL` computed as `min(user1, user2) + '_' + max(user1, user2)`.
+  - Added indexes on `public_id`, `private_pair_hash`, `last_message_at`, `created_at`, `(user_id, archived)`, `(user_id, muted)`.
+- **Backend Architecture**:
+  - Domain enums: `ConversationType` (`PRIVATE`, `GROUP`), `MemberRole` (`MEMBER`, `ADMIN`).
+  - JPA Entities: `Conversation`, `ConversationMember`.
+  - Repositories: `ConversationRepository` and `ConversationMemberRepository` featuring membership queries with dynamic filtering (`type`, `archived`, `muted`, `unread`) and batch participant retrieval (`findAllByConversationIdIn`) to completely avoid N+1 queries.
+  - Service Layer: `ConversationService` implementing create-or-find idempotency, self-conversation checks, bidirectional block enforcement, sort whitelist validation (`lastMessageAt`, `createdAt`, `title`), pagination limit validation (max size 50), participant projection with privacy checks, and archive/mute actions.
+  - Controller: `ConversationController` (`/api/conversations/*`) with complete Swagger OpenAPI documentation and standardized `ApiResponse<T>` / `PageResponse<T>`.
+- **Frontend Architecture**:
+  - `services/conversationService.js`: Complete conversation API integration (`getConversations`, `getConversation`, `createOrFindPrivateConversation`, `archiveConversation`, `muteConversation`).
+  - `components/chat/ConversationList.jsx`: Left sidebar featuring local search filtering, filter tabs (All, Unread, Archived), conversation cards with avatar, partner name, last message time, unread badges, and status icons.
+  - `components/chat/ChatArea.jsx`: Active chat area with partner details, mute and archive controls, responsive mobile back button, and empty state indicating Phase 5 real-time messaging arrival.
+  - `components/chat/NewConversationModal.jsx`: Modal to search contacts and users to immediately create or find a conversation.
+  - `pages/HomePage.jsx`: Responsive WhatsApp-style 2-column layout (sidebar + main chat pane) with seamless mobile viewport toggle and empty state.
+- **Automated Tests**:
+  - Backend: `ConversationServiceTest` (6 unit tests), `ConversationControllerIntegrationTest` (full lifecycle integration test verifying duplicate prevention, member-only access 404, pagination limit rejection, sort whitelist rejection, archive/mute filtering). All 43 backend tests passed.
+  - Frontend: `ConversationList.test.jsx`, `HomePageChat.test.jsx`, `ProfilePage.test.jsx`, `ContactsPage.test.jsx`, `SettingsPage.test.jsx`, `LoginPage.test.jsx`, `RegisterPage.test.jsx`, `ProtectedRoute.test.jsx`. All 21 frontend tests passed.
+
+### Real Test Execution Results
+- **Backend (`mvnw test`)**:
+  - Total Tests Run: 43
+  - Failures: 0
+  - Errors: 0
+  - Skipped: 0
+  - Result: `BUILD SUCCESS`
+- **Frontend (`npm test`)**:
+  - Test Files: 8 passed (8)
+  - Tests: 21 passed (21)
+  - Result: `ALL PASSED`
+- **Frontend Production Build (`npm run build`)**:
+  - Result: `vite build` completed cleanly in 1.13s with zero errors.
+
+### Known Bugs
+- None.
+
+### Next Steps
+- Phase 5: Real-Time Messaging (WebSocket, STOMP endpoints, message persistence, unread tracking, delivery and read receipts).
