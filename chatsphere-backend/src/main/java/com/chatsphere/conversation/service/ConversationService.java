@@ -166,7 +166,7 @@ public class ConversationService {
                             computedTitle,
                             computedImage,
                             conv.getLastMessageAt(),
-                            null, // Last message preview will be populated in Phase 5
+                            conv.getLastMessagePreview(),
                             cm.getUnreadCount(),
                             cm.isMuted(),
                             cm.isArchived(),

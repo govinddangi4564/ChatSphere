@@ -50,6 +50,9 @@ public class Conversation {
     @Column(name = "last_message_at")
     private Instant lastMessageAt;
 
+    @Column(name = "last_message_preview")
+    private String lastMessagePreview;
+
     @PrePersist
     public void prePersist() {
         if (this.publicId == null) {

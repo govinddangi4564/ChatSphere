@@ -494,3 +494,81 @@
 - **Access:** Authenticated
 - **Request Body (`MuteRequest`):** `{ "muted": true }`
 - **Response (`200 OK`):** `{ "success": true, "message": "Conversation muted", "data": null }`
+
+---
+
+## 6. Messages APIs (`/api/messages`)
+
+### Send Message
+- **Endpoint:** `POST /api/messages`
+- **Access:** Authenticated (caller must be an active member of the conversation)
+- **Features:**
+  - Idempotency enforced via `(sender_id, client_message_id)`. Re-submitting the same clientMessageId returns the existing message without duplicate row creation or duplicate unread increment.
+  - Server-side timestamp assignment.
+  - Automatically generates delivery receipt rows for all conversation recipients with `deliveredAt=null` and `readAt=null`.
+  - Atomically increments unread counts for all other members.
+  - Updates conversation `lastMessageAt` and `lastMessagePreview` within the same transaction.
+- **Request Body (`SendMessageRequest`):**
+```json
+{
+  "conversationPublicId": "732e6423-a808-4e36-93d3-13ab18b958e0",
+  "clientMessageId": "d03e2239-1667-4228-bc88-9bb31f795db7",
+  "content": "Hello Bob! How are you doing?",
+  "messageType": "TEXT"
+}
+```
+- **Response (`201 CREATED`):**
+```json
+{
+  "success": true,
+  "message": "Message sent successfully",
+  "data": {
+    "publicId": "e1f10c66-4e55-472e-8e67-d8c9735d10a2",
+    "clientMessageId": "d03e2239-1667-4228-bc88-9bb31f795db7",
+    "conversationPublicId": "732e6423-a808-4e36-93d3-13ab18b958e0",
+    "senderPublicId": "550e8400-e29b-41d4-a716-446655440000",
+    "senderUsername": "alice_j",
+    "senderFullName": "Alice Johnson",
+    "messageType": "TEXT",
+    "content": "Hello Bob! How are you doing?",
+    "createdAt": "2026-11-26T18:25:00Z",
+    "updatedAt": null,
+    "edited": false,
+    "deletedForEveryone": false
+  }
+}
+```
+
+### Get Conversation Messages (Keyset Cursor Pagination)
+- **Endpoint:** `GET /api/conversations/{publicId}/messages?size=30&before=cursor`
+- **Access:** Authenticated (caller must be an active member of the conversation)
+- **Features:**
+  - Keyset cursor pagination using `(created_at, id)` composite index for stable tie-breaking.
+  - Default size: 30, maximum: 100.
+  - Returns messages in chronological display order directly from SQL without in-memory sorting.
+  - Returns opaque URL-safe cursor `nextCursor` and boolean `hasMore`.
+- **Response (`200 OK`):**
+```json
+{
+  "success": true,
+  "message": "Messages retrieved successfully",
+  "data": [
+    {
+      "publicId": "e1f10c66-4e55-472e-8e67-d8c9735d10a2",
+      "clientMessageId": "d03e2239-1667-4228-bc88-9bb31f795db7",
+      "conversationPublicId": "732e6423-a808-4e36-93d3-13ab18b958e0",
+      "senderPublicId": "550e8400-e29b-41d4-a716-446655440000",
+      "senderUsername": "alice_j",
+      "senderFullName": "Alice Johnson",
+      "messageType": "TEXT",
+      "content": "Hello Bob! How are you doing?",
+      "createdAt": "2026-11-26T18:25:00Z",
+      "updatedAt": null,
+      "edited": false,
+      "deletedForEveryone": false
+    }
+  ],
+  "nextCursor": "MjAyNi0xMS0yNlQxODoyNTowMFox",
+  "hasMore": false
+}
+```

@@ -9,7 +9,8 @@
 | **Phase 2B**| Authentication Frontend (React Auth Context, Login, Register, Password Reset Pages, Guards) | Completed |
 | **Phase 3** | User Management & Profile (Contacts, Blocking, Privacy Settings) | Completed |
 | **Phase 4** | Private Conversations (Membership, Pagination, Conversation List) | Completed |
-| **Phase 5** | Real-Time Messaging (WebSocket, STOMP, Message Receipts) | Pending |
+| **Phase 5A**| Message Persistence & History over REST (Keyset Pagination, Receipts, Unread Counts) | Completed |
+| **Phase 5B**| Real-Time Messaging (WebSocket, STOMP, Typing Indicators, Real-Time Delivery/Read) | Pending |
 | **Phase 6** | Group Messaging (Group Management, Permissions, Roles) | Pending |
 | **Phase 7** | Attachments (Cloudinary Storage, Media Previews) | Pending |
 | **Phase 8** | Message Management (Reactions, Replies, Edits, Deletions) | Pending |
@@ -182,4 +183,54 @@
 - None.
 
 ### Next Steps
-- Phase 5: Real-Time Messaging (WebSocket, STOMP endpoints, message persistence, unread tracking, delivery and read receipts).
+- Phase 5A: Message Persistence & History over REST (Keyset Pagination, Receipts, Unread Counts).
+
+---
+
+## Phase 5A Progress Details (Message Persistence & Keyset History over REST)
+
+### Completed Features
+- **Database Schema**:
+  - `V5__messaging_schema.sql`: Created `messages` and `message_receipts` tables.
+  - Enforced idempotency with unique constraint `uk_messages_sender_client_msg UNIQUE (sender_id, client_message_id)`.
+  - Added composite index `idx_messages_conv_created_id (conversation_id, created_at, id)` for stable keyset pagination.
+  - Added unique constraint `uk_message_receipt_msg_recipient UNIQUE (message_id, recipient_id)`.
+  - Added `last_message_preview VARCHAR(255) NULL` to `conversations` table.
+- **Backend Architecture**:
+  - Domain enum: `MessageType` (`TEXT`, `IMAGE`, `VIDEO`, `DOCUMENT`, `AUDIO`, `SYSTEM`).
+  - JPA Entities: `Message`, `MessageReceipt`, updated `Conversation` with `lastMessagePreview`.
+  - Repositories:
+    - `MessageRepository`: Implemented `findBySenderIdAndClientMessageId` for idempotency and JPQL queries (`findNewestMessages`, `findMessagesBeforeCursor`) with `JOIN FETCH m.sender` and tie-breaker sorting `ORDER BY m.createdAt DESC, m.id DESC`.
+    - `MessageReceiptRepository`: Tracking per-recipient delivery and read timestamps.
+  - DTO Records: `SendMessageRequest`, `MessageResponse`, `CursorApiResponse<T>`.
+  - Service Layer:
+    - `MessageService`:
+      - Validates authenticated sender and conversation membership.
+      - Enforces bidirectional blocking check for private conversations.
+      - Enforces idempotency: returning existing message on duplicate `clientMessageId` without re-creating rows or duplicate unread increments.
+      - Atomically inserts message, creates receipt rows for all other conversation members, increments recipients' unread counts, and updates conversation `last_message_at` and `last_message_preview`.
+      - Keyset cursor pagination with stable Base64-encoded URL-safe cursor (`createdAt` + `id`), returning messages in chronological order with `hasMore` and `nextCursor`.
+    - `ConversationService`: Updated summary mapping to serve real `conv.getLastMessagePreview()` and unread counts.
+  - Controller: `MessageController` with endpoints `POST /api/messages` and `GET /api/conversations/{publicId}/messages`.
+- **Documentation**:
+  - `docs/api-documentation.md` updated with Section 6 covering Message Sending and Keyset Cursor Pagination contracts.
+
+### Real Test Execution Results
+- **Backend (`mvnw test`)**:
+  - Total Tests Run: 50
+  - Failures: 0
+  - Errors: 0
+  - Skipped: 0
+  - Result: `BUILD SUCCESS` (including 6 unit tests in `MessageServiceTest` and full integration test in `MessageControllerIntegrationTest`).
+- **Frontend (`npm test`)**:
+  - Test Files: 8 passed (8)
+  - Tests: 21 passed (21)
+  - Result: `ALL PASSED`
+- **Frontend Production Build (`npm run build`)**:
+  - Result: `vite build` completed cleanly in 1.38s with zero errors.
+
+### Known Bugs
+- None.
+
+### Next Steps
+- Phase 5B: Real-time messaging with WebSocket, STOMP endpoints (`/ws`, `/app/chat.send`, `/topic/conversations/{id}`), delivery and read receipt acknowledgements, and typing indicators.
