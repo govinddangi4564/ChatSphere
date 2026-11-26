@@ -10,7 +10,8 @@
 | **Phase 3** | User Management & Profile (Contacts, Blocking, Privacy Settings) | Completed |
 | **Phase 4** | Private Conversations (Membership, Pagination, Conversation List) | Completed |
 | **Phase 5A**| Message Persistence & History over REST (Keyset Pagination, Receipts, Unread Counts) | Completed |
-| **Phase 5B**| Real-Time Messaging (WebSocket, STOMP, Typing Indicators, Real-Time Delivery/Read) | Pending |
+| **Phase 5B**| Real-Time Messaging Backend (WebSocket, STOMP, Typing Indicators, Real-Time Delivery/Read) | Completed |
+| **Phase 5C**| Real-Time Messaging Frontend (STOMP Client, Chat UI, Unread Badges, Delivery Ticks) | Pending |
 | **Phase 6** | Group Messaging (Group Management, Permissions, Roles) | Pending |
 | **Phase 7** | Attachments (Cloudinary Storage, Media Previews) | Pending |
 | **Phase 8** | Message Management (Reactions, Replies, Edits, Deletions) | Pending |
@@ -234,3 +235,54 @@
 
 ### Next Steps
 - Phase 5B: Real-time messaging with WebSocket, STOMP endpoints (`/ws`, `/app/chat.send`, `/topic/conversations/{id}`), delivery and read receipt acknowledgements, and typing indicators.
+
+---
+
+## Phase 5B Progress Details (Real-Time Messaging Backend)
+
+### Completed Features
+- **WebSocket & STOMP Configuration**:
+  - Registered STOMP endpoints at `/ws` with allowed origin patterns `*` and SockJS fallback.
+  - Configured application prefix `/app`, simple broker `/topic` and `/queue`, and user destination prefix `/user`.
+  - Added `/ws/**` permit in `SecurityConfig.java`.
+- **STOMP Inbound Channel Security Interceptor**:
+  - `WebSocketAuthChannelInterceptor`:
+    - `CONNECT`: Authenticates STOMP frames via `Authorization: Bearer <token>` or `X-Authorization`, validates JWT with `JwtService`, and populates `SecurityContext` / `accessor.setUser(authentication)`. Rejects unauthenticated or invalid tokens.
+    - `SUBSCRIBE`: Enforces membership authorization for `/topic/conversations/{publicId}` destinations. Non-members attempting to eavesdrop on private conversation broadcasts are rejected with `AccessDeniedException`.
+- **Presence Tracking (In-Memory)**:
+  - `PresenceService` with concurrent session counting:
+    - User connect registers online state.
+    - User disconnect unregisters online state and updates `last_seen_at = Instant.now()` in MySQL upon total disconnect.
+  - `WebSocketEventListener` listening for `SessionConnectedEvent` and `SessionDisconnectEvent`.
+- **Service Layer & Receipts Integration**:
+  - Reused existing `MessageService` without code duplication.
+  - Added `markMessageDelivered`: updates recipient `message_receipts.delivered_at` and produces `ReceiptNotification`.
+  - Added `markConversationRead`: updates all unread message receipts for recipient, resets member `unread_count = 0`, and produces `ReceiptNotification`s.
+  - Added `getMessageSenderUsername` for recipient notification routing.
+- **WebSocket Controller (`ChatWebSocketController`)**:
+  - `/app/chat.send`: Derives sender from authenticated `Principal`, persists message via `MessageService`, and broadcasts to `/topic/conversations/{publicId}`.
+  - `/app/chat.typing`: Ephemeral indicator broadcasted to `/topic/conversations/{publicId}/typing` without database persistence.
+  - `/app/chat.delivered`: Updates delivery receipt and sends real-time notification to original sender's `/user/queue/receipts`.
+  - `/app/chat.read`: Updates read receipts, resets recipient unread count, and sends real-time notifications to sender's `/user/queue/receipts`.
+- **Documentation**:
+  - `docs/websocket-documentation.md` completely documented with handshake specifications, STOMP frame architectures, and real payload examples.
+
+### Real Test Execution Results
+- **Backend (`mvnw test`)**:
+  - Total Tests Run: 54
+  - Failures: 0
+  - Errors: 0
+  - Skipped: 0
+  - Result: `BUILD SUCCESS` (including 4 comprehensive STOMP integration test scenarios in `ChatWebSocketIntegrationTest`).
+- **Frontend (`npm test`)**:
+  - Test Files: 8 passed (8)
+  - Tests: 21 passed (21)
+  - Result: `ALL PASSED`
+- **Frontend Production Build (`npm run build`)**:
+  - Result: `vite build` completed cleanly in 1.38s with zero errors.
+
+### Known Bugs
+- None.
+
+### Next Steps
+- Phase 5C: Real-time messaging frontend (STOMP client connection, message display in ChatArea, typing indicator UI, real-time message bubbles, unread badges, and delivery ticks).

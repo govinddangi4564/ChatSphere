@@ -18,6 +18,7 @@ import com.chatsphere.message.repository.MessageRepository;
 import com.chatsphere.user.entity.User;
 import com.chatsphere.user.repository.BlockedUserRepository;
 import com.chatsphere.user.repository.UserRepository;
+import com.chatsphere.websocket.dto.ReceiptNotification;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -219,6 +220,72 @@ public class MessageService {
     }
 
     public record CursorData(Instant createdAt, Long id) {}
+
+    public ReceiptNotification markMessageDelivered(String currentUsername, String messagePublicId) {
+        User recipient = getUserByUsername(currentUsername);
+
+        MessageReceipt receipt = messageReceiptRepository.findByMessagePublicIdAndRecipientId(messagePublicId, recipient.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("MessageReceipt", "messagePublicId", messagePublicId));
+
+        if (receipt.getDeliveredAt() == null) {
+            receipt.setDeliveredAt(Instant.now());
+            messageReceiptRepository.save(receipt);
+        }
+
+        return new ReceiptNotification(
+                receipt.getMessage().getPublicId(),
+                receipt.getMessage().getConversation().getPublicId(),
+                recipient.getPublicId(),
+                "DELIVERED",
+                receipt.getDeliveredAt()
+        );
+    }
+
+    public List<ReceiptNotification> markConversationRead(String currentUsername, String conversationPublicId) {
+        User recipient = getUserByUsername(currentUsername);
+
+        Conversation conversation = conversationRepository.findByPublicId(conversationPublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
+
+        ConversationMember member = conversationMemberRepository.findByConversationIdAndUserId(conversation.getId(), recipient.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
+
+        member.setUnreadCount(0);
+        conversationMemberRepository.save(member);
+
+        List<MessageReceipt> unreadReceipts = messageReceiptRepository.findUnreadReceiptsForConversation(
+                conversation.getId(),
+                recipient.getId()
+        );
+
+        Instant now = Instant.now();
+        List<ReceiptNotification> notifications = new ArrayList<>();
+
+        for (MessageReceipt receipt : unreadReceipts) {
+            if (receipt.getDeliveredAt() == null) {
+                receipt.setDeliveredAt(now);
+            }
+            receipt.setReadAt(now);
+            messageReceiptRepository.save(receipt);
+
+            notifications.add(new ReceiptNotification(
+                    receipt.getMessage().getPublicId(),
+                    conversation.getPublicId(),
+                    recipient.getPublicId(),
+                    "READ",
+                    now
+            ));
+        }
+
+        return notifications;
+    }
+
+    @Transactional(readOnly = true)
+    public String getMessageSenderUsername(String messagePublicId) {
+        Message message = messageRepository.findByPublicId(messagePublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message", "publicId", messagePublicId));
+        return message.getSender().getUsername();
+    }
 
     private User getUserByUsername(String username) {
         return userRepository.findByUsername(username)
