@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useChatMessages } from '../../hooks/useChatMessages';
+import attachmentService from '../../services/attachmentService';
 import MessageBubble from './MessageBubble';
 import DateSeparator from './DateSeparator';
 import TypingIndicator from './TypingIndicator';
@@ -20,6 +21,12 @@ const ChatArea = ({
   const { user } = useAuth();
   const [inputText, setInputText] = useState('');
   const [showGroupInfo, setShowGroupInfo] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState(null);
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const fileInputRef = useRef(null);
+  const abortControllerRef = useRef(null);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const typingTimeoutRef = useRef(null);
@@ -121,18 +128,70 @@ const ChatArea = ({
     }, 2500);
   };
 
+  const handleFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Reset input so re-selecting same file triggers change
+    e.target.value = '';
+
+    setUploading(true);
+    setUploadProgress(0);
+    setUploadError(null);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const res = await attachmentService.uploadAttachment(
+        file,
+        (percent) => setUploadProgress(percent),
+        controller.signal
+      );
+      if (res) {
+        setPendingAttachments((prev) => [...prev, res]);
+      }
+    } catch (err) {
+      if (err.name !== 'CanceledError' && err.message !== 'canceled') {
+        const msg = err.response?.data?.message || err.message || 'File upload failed';
+        setUploadError(msg);
+      }
+    } finally {
+      setUploading(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleCancelUpload = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    setUploading(false);
+    setUploadProgress(0);
+    setUploadError(null);
+  };
+
+  const handleRemovePending = (publicId) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.publicId !== publicId));
+  };
+
   const handleSend = (e) => {
     e.preventDefault();
     const trimmed = inputText.trim();
-    if (!trimmed) return;
+    if (!trimmed && pendingAttachments.length === 0) return;
 
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }
     sendTypingIndicator(false);
 
-    sendMessage(trimmed);
+    const attachmentIds = pendingAttachments.map((a) => a.publicId);
+    const primaryType = pendingAttachments.length > 0 ? pendingAttachments[0].fileType : 'TEXT';
+
+    sendMessage(trimmed, attachmentIds, primaryType, pendingAttachments);
     setInputText('');
+    setPendingAttachments([]);
+    setUploadError(null);
   };
 
   const handleKeyDown = (e) => {
@@ -316,7 +375,82 @@ const ChatArea = ({
 
       {/* Message Input Bar */}
       <div className="chat-input-bar bg-white p-2 border-top">
+        {/* Upload Error Banner */}
+        {uploadError && (
+          <div className="alert alert-danger py-1 px-3 mb-2 d-flex align-items-center justify-content-between" style={{ fontSize: '0.85rem' }}>
+            <span><i className="bi bi-exclamation-triangle-fill me-2"></i>{uploadError}</span>
+            <button type="button" className="btn-close" style={{ fontSize: '0.65rem' }} onClick={() => setUploadError(null)}></button>
+          </div>
+        )}
+
+        {/* Uploading Progress Bar */}
+        {uploading && (
+          <div className="p-2 mb-2 bg-light border rounded d-flex align-items-center gap-2">
+            <div className="spinner-border spinner-border-sm text-success" role="status"></div>
+            <div className="progress flex-grow-1" style={{ height: '8px' }}>
+              <div
+                className="progress-bar bg-success progress-bar-striped progress-bar-animated"
+                role="progressbar"
+                style={{ width: `${uploadProgress}%` }}
+                aria-valuenow={uploadProgress}
+                aria-valuemin="0"
+                aria-valuemax="100"
+              ></div>
+            </div>
+            <span className="small text-muted">{uploadProgress}%</span>
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm py-0 px-2"
+              onClick={handleCancelUpload}
+              style={{ fontSize: '0.75rem' }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {/* Pending Attachments List */}
+        {pendingAttachments.length > 0 && (
+          <div className="d-flex flex-wrap gap-2 mb-2 p-1">
+            {pendingAttachments.map((att) => (
+              <div
+                key={att.publicId}
+                className="badge bg-light text-dark border p-2 d-flex align-items-center gap-2 shadow-sm"
+                style={{ fontSize: '0.8rem', fontWeight: 500 }}
+              >
+                <i
+                  className={
+                    att.fileType === 'IMAGE'
+                      ? 'bi bi-file-earmark-image text-primary'
+                      : att.fileType === 'VIDEO'
+                      ? 'bi bi-file-earmark-play text-danger'
+                      : att.fileType === 'AUDIO'
+                      ? 'bi bi-file-earmark-music text-info'
+                      : 'bi bi-file-earmark-text text-secondary'
+                  }
+                ></i>
+                <span className="text-truncate" style={{ maxWidth: '150px' }} title={att.fileName}>
+                  {att.fileName}
+                </span>
+                <button
+                  type="button"
+                  className="btn-close ms-1"
+                  style={{ fontSize: '0.55rem' }}
+                  onClick={() => handleRemovePending(att.publicId)}
+                  aria-label="Remove attachment"
+                ></button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <form onSubmit={handleSend} className="d-flex align-items-center">
+          <input
+            type="file"
+            ref={fileInputRef}
+            className="d-none"
+            onChange={handleFileSelect}
+          />
           <button
             type="button"
             className="btn btn-link text-secondary p-2 me-1"
@@ -328,6 +462,8 @@ const ChatArea = ({
             type="button"
             className="btn btn-link text-secondary p-2 me-2"
             title="Attach file"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
           >
             <i className="bi bi-paperclip fs-5"></i>
           </button>
@@ -345,7 +481,7 @@ const ChatArea = ({
             type="submit"
             className="btn btn-success rounded-circle d-flex align-items-center justify-content-center shadow-sm"
             style={{ width: '42px', height: '42px', flexShrink: 0 }}
-            disabled={!inputText.trim()}
+            disabled={!inputText.trim() && pendingAttachments.length === 0}
             title="Send"
           >
             <i className="bi bi-send-fill text-white" style={{ fontSize: '1rem', marginLeft: '2px' }}></i>

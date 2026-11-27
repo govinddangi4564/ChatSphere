@@ -64,6 +64,12 @@ class MessageServiceTest {
     @Mock
     private org.springframework.messaging.simp.SimpMessagingTemplate messagingTemplate;
 
+    @Mock
+    private com.chatsphere.attachment.service.AttachmentService attachmentService;
+
+    @Mock
+    private com.chatsphere.attachment.repository.MessageAttachmentRepository messageAttachmentRepository;
+
     private MessageService messageService;
 
     private User sender;
@@ -81,7 +87,9 @@ class MessageServiceTest {
                 conversationMemberRepository,
                 userRepository,
                 blockedUserRepository,
-                messagingTemplate
+                messagingTemplate,
+                attachmentService,
+                messageAttachmentRepository
         );
 
         sender = new User();

@@ -4,6 +4,8 @@ import com.chatsphere.common.enums.MessageType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+import java.util.List;
+
 public record SendMessageRequest(
         @NotBlank(message = "Conversation public ID is required")
         String conversationPublicId,
@@ -12,9 +14,19 @@ public record SendMessageRequest(
         @Size(max = 64, message = "Client message ID cannot exceed 64 characters")
         String clientMessageId,
 
-        @NotBlank(message = "Message content cannot be blank")
         @Size(max = 4000, message = "Message content cannot exceed 4000 characters")
         String content,
 
-        MessageType messageType
-) {}
+        MessageType messageType,
+
+        List<String> attachmentPublicIds
+) {
+    public SendMessageRequest(
+            String conversationPublicId,
+            String clientMessageId,
+            String content,
+            MessageType messageType
+    ) {
+        this(conversationPublicId, clientMessageId, content, messageType, List.of());
+    }
+}

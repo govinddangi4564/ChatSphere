@@ -74,10 +74,14 @@ export function useChatMessages(conversationPublicId, currentUser, webSocket, on
 
   // Send message optimistically
   const sendMessage = useCallback(
-    async (content) => {
-      if (!content || !content.trim() || !conversationPublicId) return;
+    async (content, attachmentPublicIds = [], messageType = null, attachments = []) => {
+      const hasContent = content && content.trim();
+      const hasAttachments = attachmentPublicIds && attachmentPublicIds.length > 0;
+      if (!hasContent && !hasAttachments || !conversationPublicId) return;
 
       const clientMessageId = 'client-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+      const computedType = messageType || (hasAttachments ? (attachments[0]?.fileType || 'IMAGE') : 'TEXT');
+
       const optimisticMsg = {
         publicId: null,
         clientMessageId,
@@ -85,8 +89,9 @@ export function useChatMessages(conversationPublicId, currentUser, webSocket, on
         senderPublicId: currentUser?.publicId,
         senderUsername: currentUser?.username,
         senderFullName: currentUser?.fullName,
-        content: content.trim(),
-        messageType: 'TEXT',
+        content: hasContent ? content.trim() : '',
+        messageType: computedType,
+        attachments: attachments || [],
         createdAt: new Date().toISOString(),
         status: 'SENDING'
       };
@@ -97,8 +102,9 @@ export function useChatMessages(conversationPublicId, currentUser, webSocket, on
         const payload = {
           conversationPublicId,
           clientMessageId,
-          content: content.trim(),
-          messageType: 'TEXT'
+          content: hasContent ? content.trim() : '',
+          messageType: computedType,
+          attachmentPublicIds: attachmentPublicIds || []
         };
         const restResult = await webSocket.sendChatMessage(payload);
 
@@ -148,7 +154,8 @@ export function useChatMessages(conversationPublicId, currentUser, webSocket, on
           conversationPublicId,
           clientMessageId,
           content: msg.content,
-          messageType: msg.messageType || 'TEXT'
+          messageType: msg.messageType || 'TEXT',
+          attachmentPublicIds: (msg.attachments || []).map((a) => a.publicId)
         };
         const restResult = await webSocket.sendChatMessage(payload);
         if (restResult && restResult.publicId) {

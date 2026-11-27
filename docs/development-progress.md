@@ -13,7 +13,7 @@
 | **Phase 5B**| Real-Time Messaging Backend (WebSocket, STOMP, Typing Indicators, Real-Time Delivery/Read) | Completed |
 | **Phase 5C**| Real-Time Messaging Frontend (STOMP Client, Chat UI, Unread Badges, Delivery Ticks) | Completed |
 | **Phase 6** | Group Messaging (Group Management, Permissions, Roles) | Completed |
-| **Phase 7** | Attachments (Cloudinary Storage, Media Previews) | Pending |
+| **Phase 7** | Attachments (Cloudinary Storage, Media Previews) | Completed |
 | **Phase 8** | Message Management (Reactions, Replies, Edits, Deletions) | Pending |
 | **Phase 9** | Caching and Performance (Redis, Query Optimization) | Pending |
 | **Phase 10** | Notifications and Events (Kafka, In-App Notifications) | Pending |
@@ -401,3 +401,30 @@
 
 ### Next Steps
 - Phase 7: Attachments (Cloudinary storage integration, file uploads, previews, validation, and progress).
+
+
+---
+
+## Phase 7 Progress Details (Attachments)
+
+### Completed Features
+- **Database Schema**:
+  - `V7__attachments_schema.sql`: Created `message_attachments` table with `public_id`, `message_id` (foreign key to `messages` on delete cascade), `storage_public_id`, `file_name`, `file_type`, `mime_type`, `file_size`, `storage_url`, `thumbnail_url`, and indexes on `message_id` and `public_id`.
+- **Backend Architecture & Storage Abstraction**:
+  - `FileStorageService`: Pluggable storage abstraction for uploading, deleting, and loading resources.
+  - `CloudinaryFileStorageService`: Cloud storage implementation uploading to `chatsphere/attachments` and generating transformed thumbnails.
+  - `LocalFileStorageService`: Local disk fallback implementation under `./uploads/attachments` when Cloudinary keys are absent or set to `placeholder`.
+  - `FileStorageConfig`: Primary bean provider conditionally selecting Cloudinary or local storage.
+  - `FileValidationService`: Validates extensions, enforces maximum size limits per type (IMAGE: 10MB, VIDEO: 50MB, DOCUMENT: 25MB, AUDIO: 25MB), and inspects magic bytes / signatures via Apache Tika to reject spoofed files.
+  - `AttachmentService`: Manages file upload, metadata persistence, cleanup on DB failures, authorization check on download (verifying conversation membership), and deletion rules.
+  - `AttachmentController`: Exposes `POST /api/attachments/upload`, `GET /api/attachments/{publicId}`, and `DELETE /api/attachments/{publicId}`.
+  - `MessageService`: Linked attachments to messages atomically, returning `List<AttachmentResponse>` in `MessageResponse`.
+- **Frontend Architecture & UI**:
+  - `attachmentService.js`: Service for file upload with Axios progress callback, URL resolution, and deletion.
+  - `ChatArea.jsx`: Added paperclip attachment trigger, hidden file input, upload progress bar with cancel capability, upload error alert banner, and pending attachment chip list before sending.
+  - `MessageBubble.jsx`: Media preview for IMAGE with click-to-open lightbox, HTML5 VIDEO player, HTML5 AUDIO player, and DOCUMENT cards with original file name, formatted size, and download button.
+  - `useChatMessages.js`: Updated optimistic sending and retries to support attachments.
+- **Verification & Testing**:
+  - Backend tests: 74 passing tests in `mvnw test` including `FileValidationServiceTest` and `AttachmentServiceTest`.
+  - Frontend tests: 35 passing tests in Vitest including `MessageBubbleAttachment.test.jsx`.
+  - Production build: `npm run build` completed cleanly without errors.

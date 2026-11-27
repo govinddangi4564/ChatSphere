@@ -1,5 +1,9 @@
 package com.chatsphere.message.service;
 
+import com.chatsphere.attachment.dto.AttachmentResponse;
+import com.chatsphere.attachment.entity.MessageAttachment;
+import com.chatsphere.attachment.repository.MessageAttachmentRepository;
+import com.chatsphere.attachment.service.AttachmentService;
 import com.chatsphere.common.enums.ConversationType;
 import com.chatsphere.common.enums.MessageType;
 import com.chatsphere.conversation.entity.Conversation;
@@ -44,6 +48,8 @@ public class MessageService {
     private final UserRepository userRepository;
     private final BlockedUserRepository blockedUserRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final AttachmentService attachmentService;
+    private final MessageAttachmentRepository messageAttachmentRepository;
 
     public MessageService(
             MessageRepository messageRepository,
@@ -52,7 +58,9 @@ public class MessageService {
             ConversationMemberRepository conversationMemberRepository,
             UserRepository userRepository,
             BlockedUserRepository blockedUserRepository,
-            SimpMessagingTemplate messagingTemplate
+            SimpMessagingTemplate messagingTemplate,
+            AttachmentService attachmentService,
+            MessageAttachmentRepository messageAttachmentRepository
     ) {
         this.messageRepository = messageRepository;
         this.messageReceiptRepository = messageReceiptRepository;
@@ -61,6 +69,8 @@ public class MessageService {
         this.userRepository = userRepository;
         this.blockedUserRepository = blockedUserRepository;
         this.messagingTemplate = messagingTemplate;
+        this.attachmentService = attachmentService;
+        this.messageAttachmentRepository = messageAttachmentRepository;
     }
 
     public MessageResponse sendMessage(String currentUsername, SendMessageRequest request) {
@@ -100,16 +110,28 @@ public class MessageService {
             return mapToMessageResponse(existing.get());
         }
 
+        // Content or attachment validation
+        boolean hasContent = request.content() != null && !request.content().trim().isEmpty();
+        boolean hasAttachments = request.attachmentPublicIds() != null && !request.attachmentPublicIds().isEmpty();
+        if (!hasContent && !hasAttachments) {
+            throw new BadRequestException("Message must have either text content or an attachment");
+        }
+
         // Persist new message
         Message message = new Message();
         message.setClientMessageId(request.clientMessageId());
         message.setConversation(conversation);
         message.setSender(sender);
-        message.setMessageType(request.messageType() != null ? request.messageType() : MessageType.TEXT);
-        message.setContent(request.content().trim());
+        message.setMessageType(request.messageType() != null ? request.messageType() : (hasAttachments ? MessageType.IMAGE : MessageType.TEXT));
+        message.setContent(hasContent ? request.content().trim() : "");
         message.setCreatedAt(Instant.now());
 
         Message savedMessage = messageRepository.save(message);
+
+        // Link attachments
+        if (hasAttachments) {
+            attachmentService.linkAttachmentsToMessage(savedMessage, request.attachmentPublicIds());
+        }
 
         // Create receipt rows for each active recipient and increment unread counts
         for (ConversationMember member : activeMembers) {
@@ -127,7 +149,9 @@ public class MessageService {
         // Update conversation last_message_at and preview
         conversation.setLastMessageAt(savedMessage.getCreatedAt());
         String preview = savedMessage.getContent();
-        if (preview.length() > MAX_PREVIEW_LENGTH) {
+        if (preview == null || preview.isEmpty()) {
+            preview = "[" + savedMessage.getMessageType().name() + "]";
+        } else if (preview.length() > MAX_PREVIEW_LENGTH) {
             preview = preview.substring(0, MAX_PREVIEW_LENGTH - 3) + "...";
         }
         conversation.setLastMessagePreview(preview);
@@ -229,6 +253,16 @@ public class MessageService {
     }
 
     public MessageResponse mapToMessageResponse(Message message) {
+        List<AttachmentResponse> attachments = List.of();
+        if (message.getId() != null) {
+            List<MessageAttachment> attEntities = messageAttachmentRepository.findAllByMessageId(message.getId());
+            if (attEntities != null && !attEntities.isEmpty()) {
+                attachments = attEntities.stream()
+                        .map(attachmentService::toResponse)
+                        .toList();
+            }
+        }
+
         return new MessageResponse(
                 message.getPublicId(),
                 message.getClientMessageId(),
@@ -241,7 +275,8 @@ public class MessageService {
                 message.getCreatedAt(),
                 message.getUpdatedAt(),
                 message.isEdited(),
-                message.isDeletedForEveryone()
+                message.isDeletedForEveryone(),
+                attachments
         );
     }
 
