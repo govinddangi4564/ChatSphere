@@ -1,117 +1,311 @@
-import React from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useAuth } from '../../hooks/useAuth';
+import { useChatMessages } from '../../hooks/useChatMessages';
+import MessageBubble from './MessageBubble';
+import DateSeparator from './DateSeparator';
+import TypingIndicator from './TypingIndicator';
 
-export default function ChatArea({
+const ChatArea = ({
   conversation,
   onBack,
+  webSocket,
+  onMessageReceived,
   onToggleArchive,
   onToggleMute,
   loadingAction
-}) {
+}) => {
+  const { user } = useAuth();
+  const [inputText, setInputText] = useState('');
+  const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
+  const prevScrollHeightRef = useRef(0);
+  const isPrependingRef = useRef(false);
+
+  const {
+    messages,
+    loading,
+    loadingMore,
+    hasMore,
+    partnerTyping,
+    loadMoreMessages,
+    sendMessage,
+    retryMessage,
+    sendTypingIndicator
+  } = useChatMessages(conversation?.publicId, user, webSocket, onMessageReceived);
+
+  // Group messages with dates
+  const renderMessages = () => {
+    let lastDate = null;
+    const elements = [];
+
+    messages.forEach((msg, idx) => {
+      const msgDate = new Date(msg.createdAt).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+
+      if (msgDate !== lastDate) {
+        elements.push(
+          <DateSeparator key={`date-${msgDate}-${idx}`} dateString={msgDate} />
+        );
+        lastDate = msgDate;
+      }
+
+      const isOwn = msg.senderPublicId === user?.publicId || msg.senderUsername === user?.username;
+
+      elements.push(
+        <MessageBubble
+          key={msg.clientMessageId || msg.publicId || `msg-${idx}`}
+          message={msg}
+          isOwnMessage={isOwn}
+          isOutgoing={isOwn}
+          onRetry={retryMessage}
+        />
+      );
+    });
+
+    return elements;
+  };
+
+  // Scroll to bottom on initial load or new outgoing messages
+  useEffect(() => {
+    if (!loadingMore && !isPrependingRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages.length, loadingMore]);
+
+  // Adjust scroll position after prepending older messages
+  useEffect(() => {
+    if (isPrependingRef.current && messagesContainerRef.current) {
+      const newScrollHeight = messagesContainerRef.current.scrollHeight;
+      const scrollDiff = newScrollHeight - prevScrollHeightRef.current;
+      messagesContainerRef.current.scrollTop += scrollDiff;
+      isPrependingRef.current = false;
+    }
+  }, [messages]);
+
+  // Upward infinite scroll handler
+  const handleScroll = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    if (container.scrollTop <= 60 && hasMore && !loadingMore && !loading) {
+      isPrependingRef.current = true;
+      prevScrollHeightRef.current = container.scrollHeight;
+      loadMoreMessages();
+    }
+  }, [hasMore, loadingMore, loading, loadMoreMessages]);
+
+  const handleInputChange = (e) => {
+    const val = e.target.value;
+    setInputText(val);
+
+    // Send typing event
+    sendTypingIndicator(true);
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    typingTimeoutRef.current = setTimeout(() => {
+      sendTypingIndicator(false);
+    }, 2500);
+  };
+
+  const handleSend = (e) => {
+    e.preventDefault();
+    const trimmed = inputText.trim();
+    if (!trimmed) return;
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    sendTypingIndicator(false);
+
+    sendMessage(trimmed);
+    setInputText('');
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend(e);
+    }
+  };
+
   if (!conversation) {
     return (
-      <div className="chat-main align-items-center justify-content-center p-4 text-center">
-        <div style={{ maxWidth: '420px' }}>
-          <div className="mb-3">
-            <span className="display-4 text-secondary-color">
-              <i className="bi bi-chat-square-quote-fill"></i>
-            </span>
-          </div>
-          <h4 className="fw-bold mb-2">ChatSphere Web</h4>
-          <p className="text-muted small mb-0">
-            Send and receive messages with your contacts. Select a conversation from the sidebar or click the new chat button to get started.
-          </p>
-        </div>
+      <div className="h-100 d-flex flex-column align-items-center justify-content-center bg-light text-muted p-4">
+        <i className="bi bi-chat-square-text display-1 mb-3 text-secondary opacity-50"></i>
+        <h4 className="fw-semibold">ChatSphere Web</h4>
+        <p className="text-center text-muted" style={{ maxWidth: '420px' }}>
+          Select a conversation from the sidebar or search for users to start messaging in real-time.
+        </p>
       </div>
     );
   }
 
-  const partner = conversation.participants?.find((p) => p.role !== 'SELF'); // or simply first
-  const displayTitle = conversation.title;
-  const displayImage = conversation.imageUrl;
+  const partner = conversation.otherParticipant || {};
+  const partnerName = partner.fullName || partner.username || conversation.title || 'Chat';
+  const partnerUsername = partner.username ? `@${partner.username}` : '';
+  const isOnline = partner.isOnline;
 
   return (
-    <div className="chat-main">
-      {/* Top Header */}
-      <div className="chat-header justify-content-between shadow-sm">
-        <div className="d-flex align-items-center gap-2 min-w-0">
-          {/* Back button for mobile view */}
-          <button
-            className="btn btn-light btn-sm rounded-circle d-md-none me-1"
-            onClick={onBack}
-            title="Back to conversations"
-          >
-            <i className="bi bi-arrow-left"></i>
-          </button>
-
-          {displayImage ? (
-            <img src={displayImage} alt={displayTitle} className="avatar-circle-sm" />
-          ) : (
-            <div className="avatar-circle-sm">
-              {displayTitle ? displayTitle.charAt(0).toUpperCase() : 'C'}
-            </div>
+    <div className="d-flex flex-column h-100 chat-area bg-light">
+      {/* Chat Header */}
+      <div className="chat-header d-flex align-items-center justify-content-between px-3 py-2 bg-white border-bottom shadow-sm">
+        <div className="d-flex align-items-center">
+          {onBack && (
+            <button
+              className="btn btn-link text-dark p-0 me-2 d-md-none"
+              onClick={onBack}
+              aria-label="Back to conversations"
+            >
+              <i className="bi bi-arrow-left fs-4"></i>
+            </button>
           )}
-
-          <div className="min-w-0">
-            <h6 className="mb-0 text-truncate fw-semibold">{displayTitle}</h6>
-            <small className="text-muted d-block text-truncate" style={{ fontSize: '0.75rem' }}>
-              {conversation.type === 'PRIVATE' ? 'End-to-end encrypted' : 'Group conversation'}
+          <div className="position-relative me-3">
+            <div
+              className="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold bg-secondary"
+              style={{ width: '42px', height: '42px', fontSize: '1.1rem' }}
+            >
+              {partnerName.charAt(0).toUpperCase()}
+            </div>
+            {isOnline && (
+              <span
+                className="position-absolute bottom-0 end-0 bg-success border border-white rounded-circle"
+                style={{ width: '10px', height: '10px' }}
+                title="Online"
+              ></span>
+            )}
+          </div>
+          <div>
+            <h6 className="mb-0 fw-semibold text-truncate" style={{ maxWidth: '240px' }}>
+              {partnerName}
+            </h6>
+            <small className="text-muted">
+              {partnerTyping ? (
+                <span className="text-success fw-semibold">typing...</span>
+              ) : isOnline ? (
+                <span className="text-success">online</span>
+              ) : partnerUsername ? (
+                partnerUsername
+              ) : (
+                'offline'
+              )}
             </small>
           </div>
         </div>
 
-        {/* Action icons */}
-        <div className="d-flex align-items-center gap-2">
-          <button
-            className={`btn btn-sm ${conversation.muted ? 'btn-outline-warning' : 'btn-light'} rounded-circle`}
-            onClick={() => onToggleMute(conversation.publicId, !conversation.muted)}
-            disabled={loadingAction}
-            title={conversation.muted ? 'Unmute' : 'Mute'}
-          >
-            <i className={`bi ${conversation.muted ? 'bi-bell-slash-fill' : 'bi-bell'}`}></i>
-          </button>
-
-          <button
-            className={`btn btn-sm ${conversation.archived ? 'btn-outline-secondary' : 'btn-light'} rounded-circle`}
-            onClick={() => onToggleArchive(conversation.publicId, !conversation.archived)}
-            disabled={loadingAction}
-            title={conversation.archived ? 'Unarchive' : 'Archive'}
-          >
-            <i className={`bi ${conversation.archived ? 'bi-archive-fill' : 'bi-archive'}`}></i>
+        <div className="d-flex align-items-center text-secondary">
+          {onToggleMute && (
+            <button
+              className={`btn btn-sm btn-link p-1 me-1 ${conversation.muted ? 'text-danger' : 'text-secondary'}`}
+              onClick={() => onToggleMute(conversation.publicId, !conversation.muted)}
+              disabled={loadingAction}
+              title={conversation.muted ? 'Unmute' : 'Mute'}
+            >
+              <i className={`bi ${conversation.muted ? 'bi-bell-slash-fill' : 'bi-bell'}`}></i>
+            </button>
+          )}
+          {onToggleArchive && (
+            <button
+              className={`btn btn-sm btn-link p-1 me-1 ${conversation.archived ? 'text-primary' : 'text-secondary'}`}
+              onClick={() => onToggleArchive(conversation.publicId, !conversation.archived)}
+              disabled={loadingAction}
+              title={conversation.archived ? 'Unarchive' : 'Archive'}
+            >
+              <i className={`bi ${conversation.archived ? 'bi-archive-fill' : 'bi-archive'}`}></i>
+            </button>
+          )}
+          <button className="btn btn-sm btn-link text-secondary p-1" title="More options">
+            <i className="bi bi-three-dots-vertical fs-5"></i>
           </button>
         </div>
       </div>
 
-      {/* Messages Area (Phase 4 Placeholder) */}
-      <div className="chat-messages d-flex flex-column justify-content-center align-items-center text-center">
-        <div className="card card-custom p-4 border shadow-sm" style={{ maxWidth: '440px' }}>
-          <div className="mb-2">
-            <i className="bi bi-shield-lock-fill text-success fs-3"></i>
+      {/* Messages Scroll Area */}
+      <div
+        ref={messagesContainerRef}
+        onScroll={handleScroll}
+        className="chat-messages-container flex-grow-1 overflow-auto p-3"
+        style={{
+          backgroundImage: 'radial-gradient(#e0e0e0 1px, transparent 1px)',
+          backgroundSize: '20px 20px',
+          backgroundColor: '#efeae2'
+        }}
+      >
+        {loadingMore && (
+          <div className="text-center my-2">
+            <div className="spinner-border spinner-border-sm text-secondary" role="status">
+              <span className="visually-hidden">Loading older messages...</span>
+            </div>
           </div>
-          <h6 className="fw-bold mb-1">Beginning of Conversation</h6>
-          <p className="text-muted small mb-3">
-            This is the start of your private conversation with <strong>{displayTitle}</strong>.
-          </p>
-          <div className="p-2 bg-light rounded text-muted small">
-            <i className="bi bi-info-circle me-1"></i>
-            Real-time messaging, delivery receipts, and notifications are introduced in <strong>Phase 5</strong>.
+        )}
+
+        {loading ? (
+          <div className="h-100 d-flex align-items-center justify-content-center">
+            <div className="spinner-border text-success" role="status">
+              <span className="visually-hidden">Loading messages...</span>
+            </div>
           </div>
-        </div>
+        ) : messages.length === 0 ? (
+          <div className="h-100 d-flex flex-column align-items-center justify-content-center text-muted">
+            <i className="bi bi-chat-dots fs-1 mb-2 text-secondary opacity-50"></i>
+            <p className="mb-0">No messages yet.</p>
+            <small>Say hello to start the conversation!</small>
+          </div>
+        ) : (
+          <>
+            {renderMessages()}
+            {partnerTyping && <TypingIndicator partnerName={partnerName} />}
+            <div ref={messagesEndRef} />
+          </>
+        )}
       </div>
 
-      {/* Bottom Message Input Bar */}
-      <div className="chat-footer">
-        <div className="input-group">
+      {/* Message Input Bar */}
+      <div className="chat-input-bar bg-white p-2 border-top">
+        <form onSubmit={handleSend} className="d-flex align-items-center">
+          <button
+            type="button"
+            className="btn btn-link text-secondary p-2 me-1"
+            title="Emoji"
+          >
+            <i className="bi bi-emoji-smile fs-5"></i>
+          </button>
+          <button
+            type="button"
+            className="btn btn-link text-secondary p-2 me-2"
+            title="Attach file"
+          >
+            <i className="bi bi-paperclip fs-5"></i>
+          </button>
           <input
             type="text"
-            className="form-control"
-            placeholder="Messaging will be enabled in Phase 5..."
-            disabled
+            className="form-control rounded-pill px-3 py-2 bg-light border-0 me-2"
+            placeholder="Type a message..."
+            value={inputText}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            disabled={!conversation}
+            autoFocus
           />
-          <button className="btn btn-secondary" disabled>
-            <i className="bi bi-send-fill"></i>
+          <button
+            type="submit"
+            className="btn btn-success rounded-circle d-flex align-items-center justify-content-center shadow-sm"
+            style={{ width: '42px', height: '42px', flexShrink: 0 }}
+            disabled={!inputText.trim()}
+            title="Send"
+          >
+            <i className="bi bi-send-fill text-white" style={{ fontSize: '1rem', marginLeft: '2px' }}></i>
           </button>
-        </div>
+        </form>
       </div>
     </div>
   );
-}
+};
+
+export default ChatArea;

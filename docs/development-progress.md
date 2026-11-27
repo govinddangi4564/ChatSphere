@@ -11,7 +11,7 @@
 | **Phase 4** | Private Conversations (Membership, Pagination, Conversation List) | Completed |
 | **Phase 5A**| Message Persistence & History over REST (Keyset Pagination, Receipts, Unread Counts) | Completed |
 | **Phase 5B**| Real-Time Messaging Backend (WebSocket, STOMP, Typing Indicators, Real-Time Delivery/Read) | Completed |
-| **Phase 5C**| Real-Time Messaging Frontend (STOMP Client, Chat UI, Unread Badges, Delivery Ticks) | Pending |
+| **Phase 5C**| Real-Time Messaging Frontend (STOMP Client, Chat UI, Unread Badges, Delivery Ticks) | Completed |
 | **Phase 6** | Group Messaging (Group Management, Permissions, Roles) | Pending |
 | **Phase 7** | Attachments (Cloudinary Storage, Media Previews) | Pending |
 | **Phase 8** | Message Management (Reactions, Replies, Edits, Deletions) | Pending |
@@ -286,3 +286,61 @@
 
 ### Next Steps
 - Phase 5C: Real-time messaging frontend (STOMP client connection, message display in ChatArea, typing indicator UI, real-time message bubbles, unread badges, and delivery ticks).
+
+
+---
+
+## Phase 5C Progress Details (Real-Time Messaging Frontend)
+
+### Completed Features
+- **WebSocket & STOMP Service Layer**:
+  - `websocketService.js`: STOMP client using `@stomp/stompjs` and `sockjs-client` fallback. Automatically injects `Authorization: Bearer <token>` on STOMP `CONNECT`, supports automatic exponential backoff reconnection, thread-safe destination subscriptions, and robust cleanup.
+  - `useWebSocket.js`: React hook integrating `websocketService` with `AuthContext` to connect when logged in and disconnect on sign out. Provides helper dispatchers: `sendChatMessage` (with REST fallback), `sendTyping`, `sendDelivered`, and `sendRead`.
+  - `messageService.js`: REST service for keyset message history (`/api/conversations/{id}/messages?before={cursor}&size=30`) and fallback message creation (`/api/messages`).
+- **Chat Window UI (`ChatArea.jsx`)**:
+  - WhatsApp-inspired aesthetic (`#075E54`, `#128C7E`, `#25D366`, `#DCF8C6`, `#F0F2F5`, `#111B21` in dark mode).
+  - Header: Partner name, avatar, online indicator, and live typing status ("typing...").
+  - Date Separator: Sticky badges ("Today", "Yesterday", or formatted dates) grouping messages by chronological day.
+  - Incoming & Outgoing Bubbles: Distinct styling, micro-timestamps, and status ticks (`bi-clock` sending, `bi-check` sent, `bi-check-all` gray delivered, `bi-check-all` cyan read).
+  - Error Handling & Retry: Failed sends render an alert badge with a retry button to re-dispatch with the original `clientMessageId`.
+  - Typing Indicator: WhatsApp-style 3-dot pulsing wave animation (`TypingIndicator.jsx`).
+  - Input Bar: Clean rounded input with emoji/attachment placeholders, auto-focus, and debounced typing indicator broadcast.
+- **State Management & Keyset Pagination (`useChatMessages.js`)**:
+  - Upward Infinite Scrolling: Listens to scroll position; when reaching top (`scrollTop <= 60`), fetches older page with keyset cursor and prepends messages while preserving exact scroll position (`scrollTop += newHeight - prevHeight`).
+  - Optimistic Send & Reconciliation: Appends outgoing message immediately with `status: 'SENDING'` and UUID `clientMessageId`. On STOMP broadcast, reconciles in-place by `clientMessageId` and sets `status: 'SENT'`.
+  - Live Receipts: Automatically dispatches delivery receipt when message arrives and read receipt when active conversation is viewed. Reconciles recipient updates from `/user/queue/receipts`.
+  - Ephemeral Typing Events: Subscribes to `/topic/conversations/{id}/typing` and clears after 3 seconds of inactivity.
+- **Live Sidebar Updates (`HomePage.jsx`)**:
+  - Reconciles active and inactive conversation updates in real-time.
+  - When a message arrives for an inactive chat, increments its `unreadCount` badge and moves it to the top of the conversation list.
+  - Selecting a conversation automatically clears its local `unreadCount` to 0.
+
+### Real Test Execution Results
+- **Frontend Test Suite (`npm test`)**:
+  - `ChatArea.test.jsx` (5 tests passed):
+    - Empty state placeholder rendering
+    - Chat header and initial message history loading
+    - Optimistic send, input clear, and server acknowledgment
+    - Retry button display on network failure and retry dispatch
+    - Upward infinite scroll cursor pagination trigger
+  - `HomePageChat.test.jsx` (2 tests passed)
+  - `ConversationList.test.jsx` (3 tests passed)
+  - `LoginPage.test.jsx` (4 tests passed)
+  - `RegisterPage.test.jsx` (3 tests passed)
+  - `ContactsPage.test.jsx` (2 tests passed)
+  - `SettingsPage.test.jsx` (2 tests passed)
+  - `ProfilePage.test.jsx` (2 tests passed)
+  - `ProtectedRoute.test.jsx` (3 tests passed)
+  - **Total Frontend Tests: 9 files passed, 26 tests passed, 0 failed.**
+- **Frontend Production Build (`npm run build`)**:
+  - Result: `vite build` completed cleanly in 1.69s (263 modules transformed, zero errors).
+- **Backend Test Suite (`mvnw test`)**:
+  - Total Tests Run: 54
+  - Failures: 0, Errors: 0, Skipped: 0
+  - Result: `BUILD SUCCESS`
+
+### Known Bugs
+- None.
+
+### Next Steps
+- Phase 6: Group Messaging (group creation, group member management, admin roles, group message broadcast).

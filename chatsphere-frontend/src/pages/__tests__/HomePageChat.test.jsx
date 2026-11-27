@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import HomePage from '../HomePage';
 import { AuthContext } from '../../context/AuthContext';
 import { conversationService } from '../../services/conversationService';
+import { messageService } from '../../services/messageService';
 
 vi.mock('../../services/conversationService', () => ({
   conversationService: {
@@ -13,6 +14,23 @@ vi.mock('../../services/conversationService', () => ({
     createOrFindPrivateConversation: vi.fn(),
     archiveConversation: vi.fn(),
     muteConversation: vi.fn()
+  }
+}));
+
+vi.mock('../../services/messageService', () => ({
+  messageService: {
+    getMessages: vi.fn().mockResolvedValue({ success: true, data: [], nextCursor: null, hasMore: false }),
+    sendMessage: vi.fn()
+  }
+}));
+
+vi.mock('../../services/websocketService', () => ({
+  websocketService: {
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    isConnected: vi.fn(() => false),
+    subscribe: vi.fn(() => vi.fn()),
+    send: vi.fn()
   }
 }));
 
@@ -42,6 +60,11 @@ describe('HomePage Chat Layout', () => {
       { publicId: 'u-1', fullName: 'Alice', username: 'alice', role: 'MEMBER' },
       { publicId: 'u-2', fullName: 'Charlie Chaplin', username: 'charlie', role: 'MEMBER' }
     ],
+    otherParticipant: {
+      publicId: 'u-2',
+      fullName: 'Charlie Chaplin',
+      username: 'charlie'
+    },
     muted: false,
     archived: false,
     unreadCount: 0,
@@ -53,7 +76,8 @@ describe('HomePage Chat Layout', () => {
       <BrowserRouter>
         <AuthContext.Provider
           value={{
-            user: { username: 'alice', fullName: 'Alice Smith' },
+            user: { publicId: 'u-1', username: 'alice', fullName: 'Alice Smith' },
+            token: 'mock-token',
             isAuthenticated: true,
             logout: vi.fn()
           }}
@@ -66,6 +90,13 @@ describe('HomePage Chat Layout', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    messageService.getMessages.mockResolvedValue({
+      success: true,
+      data: [],
+      nextCursor: null,
+      hasMore: false
+    });
   });
 
   it('renders chat layout with conversations and default empty state', async () => {
@@ -99,8 +130,7 @@ describe('HomePage Chat Layout', () => {
 
     await waitFor(() => {
       expect(conversationService.getConversation).toHaveBeenCalledWith('conv-1');
-      expect(screen.getByText(/beginning of conversation/i)).toBeInTheDocument();
-      expect(screen.getByPlaceholderText(/messaging will be enabled in phase 5/i)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/type a message/i)).toBeInTheDocument();
     });
   });
 });

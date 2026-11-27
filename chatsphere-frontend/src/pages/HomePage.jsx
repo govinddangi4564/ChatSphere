@@ -4,6 +4,7 @@ import ConversationList from '../components/chat/ConversationList';
 import ChatArea from '../components/chat/ChatArea';
 import NewConversationModal from '../components/chat/NewConversationModal';
 import { conversationService } from '../services/conversationService';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 export default function HomePage() {
   const [conversations, setConversations] = useState([]);
@@ -16,6 +17,8 @@ export default function HomePage() {
   const [actionLoading, setActionLoading] = useState(false);
 
   const [showNewChatModal, setShowNewChatModal] = useState(false);
+
+  const webSocket = useWebSocket();
 
   const fetchConversations = useCallback(async () => {
     try {
@@ -53,6 +56,13 @@ export default function HomePage() {
       setSelectedConversationId(publicId);
       const data = await conversationService.getConversation(publicId);
       setActiveConversation(data);
+
+      // Clear unread count locally when opened
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.publicId === publicId ? { ...c, unreadCount: 0 } : c
+        )
+      );
     } catch {
       setActiveConversation(null);
     } finally {
@@ -75,6 +85,38 @@ export default function HomePage() {
       loadConversationDetails(newConv.publicId);
     }
   };
+
+  // Live sidebar update when a message is sent or received
+  const handleMessageUpdate = useCallback(
+    (msg) => {
+      if (!msg) return;
+      const targetConvId = msg.conversationPublicId;
+
+      setConversations((prev) => {
+        const convIndex = prev.findIndex((c) => c.publicId === targetConvId);
+        if (convIndex === -1) {
+          // If not in the current list, refresh list
+          fetchConversations();
+          return prev;
+        }
+
+        const existing = prev[convIndex];
+        const isCurrentActive = selectedConversationId === targetConvId;
+        const updated = {
+          ...existing,
+          lastMessagePreview: msg.content,
+          lastMessageAt: msg.createdAt || new Date().toISOString(),
+          unreadCount: isCurrentActive ? 0 : (existing.unreadCount || 0) + 1
+        };
+
+        // Move the updated conversation to the top
+        const newList = [...prev];
+        newList.splice(convIndex, 1);
+        return [updated, ...newList];
+      });
+    },
+    [selectedConversationId, fetchConversations]
+  );
 
   const handleToggleArchive = async (publicId, archived) => {
     try {
@@ -129,6 +171,8 @@ export default function HomePage() {
           <ChatArea
             conversation={activeConversation}
             onBack={handleBackToConversations}
+            webSocket={webSocket}
+            onMessageReceived={handleMessageUpdate}
             onToggleArchive={handleToggleArchive}
             onToggleMute={handleToggleMute}
             loadingAction={actionLoading || loadingActive}
