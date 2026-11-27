@@ -29,17 +29,20 @@ public class SecurityConfig {
 
     private final CorsConfigurationSource corsConfigurationSource;
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final AuthRateLimitingFilter authRateLimitingFilter;
     private final CustomUserDetailsService userDetailsService;
     private final ObjectMapper objectMapper;
 
     public SecurityConfig(
             CorsConfigurationSource corsConfigurationSource,
             JwtAuthenticationFilter jwtAuthenticationFilter,
+            AuthRateLimitingFilter authRateLimitingFilter,
             CustomUserDetailsService userDetailsService,
             ObjectMapper objectMapper
     ) {
         this.corsConfigurationSource = corsConfigurationSource;
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.authRateLimitingFilter = authRateLimitingFilter;
         this.userDetailsService = userDetailsService;
         this.objectMapper = objectMapper;
     }
@@ -105,6 +108,7 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
                 .authenticationProvider(authenticationProvider())
+                .addFilterBefore(authRateLimitingFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

@@ -22,6 +22,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    networks:
+      - chatsphere-network
 
   redis:
     image: redis:7-alpine
@@ -38,9 +40,62 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    networks:
+      - chatsphere-network
+
+  backend:
+    build:
+      context: ../chatsphere-backend
+      dockerfile: Dockerfile
+    container_name: chatsphere-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-chatsphere}
+      DB_USERNAME: ${DB_USERNAME:-chatsphere_user}
+      DB_PASSWORD: ${DB_PASSWORD:-chatsphere_secret}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-900000}
+      JWT_REFRESH_EXPIRATION_MS: ${JWT_REFRESH_EXPIRATION_MS:-604800000}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+      LOCAL_STORAGE_DIR: /app/uploads
+    ports:
+      - "8080:8080"
+    volumes:
+      - backend_uploads:/app/uploads
+    networks:
+      - chatsphere-network
+
+  frontend:
+    build:
+      context: ../chatsphere-frontend
+      dockerfile: Dockerfile
+    container_name: chatsphere-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    networks:
+      - chatsphere-network
 
 volumes:
   mysql_data:
     driver: local
   redis_data:
     driver: local
+  backend_uploads:
+    driver: local
+
+networks:
+  chatsphere-network:
+    driver: bridge
