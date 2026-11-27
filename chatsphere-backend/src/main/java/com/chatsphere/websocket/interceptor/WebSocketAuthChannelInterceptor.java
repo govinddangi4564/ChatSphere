@@ -1,5 +1,6 @@
 package com.chatsphere.websocket.interceptor;
 
+import com.chatsphere.conversation.entity.ConversationMember;
 import com.chatsphere.conversation.repository.ConversationMemberRepository;
 import com.chatsphere.security.CustomUserDetailsService;
 import com.chatsphere.security.JwtService;
@@ -115,7 +116,7 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         // Rule 1: Conversation destination authorization: /topic/conversations/{conversationPublicId}
         if (destination.startsWith("/topic/conversations/")) {
             String conversationPublicId = destination.substring("/topic/conversations/".length());
-            // Strip any trailing slashes or subpaths
+            // Strip any trailing slashes or subpaths (e.g. /typing)
             int slashIdx = conversationPublicId.indexOf('/');
             if (slashIdx > 0) {
                 conversationPublicId = conversationPublicId.substring(0, slashIdx);
@@ -126,13 +127,13 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
                 throw new AccessDeniedException("User not found");
             }
 
-            boolean isMember = conversationMemberRepository
-                    .findByConversationPublicIdAndUserId(conversationPublicId, userOpt.get().getId())
-                    .isPresent();
+            // Must be an ACTIVE member (leftAt == null)
+            Optional<ConversationMember> activeMember = conversationMemberRepository
+                    .findByConversationPublicIdAndUserIdAndLeftAtIsNull(conversationPublicId, userOpt.get().getId());
 
-            if (!isMember) {
-                log.warn("STOMP SUBSCRIBE forbidden: user {} is not a member of conversation {}", principal.getName(), conversationPublicId);
-                throw new AccessDeniedException("Forbidden: you are not a member of conversation " + conversationPublicId);
+            if (activeMember.isEmpty()) {
+                log.warn("STOMP SUBSCRIBE forbidden: user {} is not an active member of conversation {}", principal.getName(), conversationPublicId);
+                throw new AccessDeniedException("Forbidden: you are not an active member of conversation " + conversationPublicId);
             }
         }
     }

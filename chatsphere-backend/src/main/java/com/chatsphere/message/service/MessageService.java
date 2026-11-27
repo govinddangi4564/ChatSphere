@@ -20,6 +20,8 @@ import com.chatsphere.user.repository.BlockedUserRepository;
 import com.chatsphere.user.repository.UserRepository;
 import com.chatsphere.websocket.dto.ReceiptNotification;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,6 +43,7 @@ public class MessageService {
     private final ConversationMemberRepository conversationMemberRepository;
     private final UserRepository userRepository;
     private final BlockedUserRepository blockedUserRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
     public MessageService(
             MessageRepository messageRepository,
@@ -48,7 +51,8 @@ public class MessageService {
             ConversationRepository conversationRepository,
             ConversationMemberRepository conversationMemberRepository,
             UserRepository userRepository,
-            BlockedUserRepository blockedUserRepository
+            BlockedUserRepository blockedUserRepository,
+            SimpMessagingTemplate messagingTemplate
     ) {
         this.messageRepository = messageRepository;
         this.messageReceiptRepository = messageReceiptRepository;
@@ -56,6 +60,7 @@ public class MessageService {
         this.conversationMemberRepository = conversationMemberRepository;
         this.userRepository = userRepository;
         this.blockedUserRepository = blockedUserRepository;
+        this.messagingTemplate = messagingTemplate;
     }
 
     public MessageResponse sendMessage(String currentUsername, SendMessageRequest request) {
@@ -64,15 +69,22 @@ public class MessageService {
         Conversation conversation = conversationRepository.findByPublicId(request.conversationPublicId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", request.conversationPublicId()));
 
-        // Validate membership
-        conversationMemberRepository.findByConversationIdAndUserId(conversation.getId(), sender.getId())
+        // Validate active membership
+        ConversationMember senderMember = conversationMemberRepository.findByConversationIdAndUserId(conversation.getId(), sender.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", request.conversationPublicId()));
 
-        List<ConversationMember> members = conversationMemberRepository.findAllByConversationId(conversation.getId());
+        if (senderMember.getLeftAt() != null) {
+            throw new AccessDeniedException("User is not an active member of this conversation");
+        }
+
+        List<ConversationMember> allMembers = conversationMemberRepository.findAllByConversationId(conversation.getId());
+        List<ConversationMember> activeMembers = allMembers.stream()
+                .filter(m -> m.getLeftAt() == null)
+                .toList();
 
         // Validate block rules for private conversations
         if (conversation.getConversationType() == ConversationType.PRIVATE) {
-            ConversationMember recipientMember = members.stream()
+            ConversationMember recipientMember = activeMembers.stream()
                     .filter(m -> !m.getUser().getId().equals(sender.getId()))
                     .findFirst()
                     .orElse(null);
@@ -99,8 +111,8 @@ public class MessageService {
 
         Message savedMessage = messageRepository.save(message);
 
-        // Create receipt rows for each recipient and increment unread counts
-        for (ConversationMember member : members) {
+        // Create receipt rows for each active recipient and increment unread counts
+        for (ConversationMember member : activeMembers) {
             if (!member.getUser().getId().equals(sender.getId())) {
                 MessageReceipt receipt = new MessageReceipt();
                 receipt.setMessage(savedMessage);
@@ -124,6 +136,35 @@ public class MessageService {
         return mapToMessageResponse(savedMessage);
     }
 
+    public MessageResponse sendSystemMessage(Conversation conversation, String content) {
+        Message message = new Message();
+        message.setClientMessageId("sys-" + UUID.randomUUID());
+        message.setConversation(conversation);
+        message.setSender(conversation.getCreatedBy());
+        message.setMessageType(MessageType.SYSTEM);
+        message.setContent(content.trim());
+        message.setCreatedAt(Instant.now());
+
+        Message savedMessage = messageRepository.save(message);
+
+        conversation.setLastMessageAt(savedMessage.getCreatedAt());
+        String preview = savedMessage.getContent();
+        if (preview.length() > MAX_PREVIEW_LENGTH) {
+            preview = preview.substring(0, MAX_PREVIEW_LENGTH - 3) + "...";
+        }
+        conversation.setLastMessagePreview(preview);
+        conversationRepository.save(conversation);
+
+        MessageResponse response = mapToMessageResponse(savedMessage);
+
+        messagingTemplate.convertAndSend(
+                "/topic/conversations/" + conversation.getPublicId(),
+                response
+        );
+
+        return response;
+    }
+
     @Transactional(readOnly = true)
     public CursorApiResponse<MessageResponse> getMessages(
             String currentUsername,
@@ -136,40 +177,45 @@ public class MessageService {
         Conversation conversation = conversationRepository.findByPublicId(conversationPublicId)
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
 
-        // Validate membership
-        conversationMemberRepository.findByConversationIdAndUserId(conversation.getId(), currentUser.getId())
+        // Validate active membership
+        ConversationMember member = conversationMemberRepository.findByConversationIdAndUserId(conversation.getId(), currentUser.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
 
-        int safeSize = size <= 0 ? DEFAULT_PAGE_SIZE : size;
-        if (safeSize > MAX_PAGE_SIZE) {
+        if (member.getLeftAt() != null) {
+            throw new AccessDeniedException("User is not an active member of this conversation");
+        }
+
+        int pageSize = size <= 0 ? DEFAULT_PAGE_SIZE : size;
+        if (pageSize > MAX_PAGE_SIZE) {
             throw new BadRequestException("Maximum page size is " + MAX_PAGE_SIZE);
         }
 
-        // Fetch size + 1 to check if there are older messages
-        PageRequest pageRequest = PageRequest.of(0, safeSize + 1);
-        List<Message> queryResults;
-        if (beforeCursor == null || beforeCursor.isBlank()) {
-            queryResults = messageRepository.findNewestMessages(conversation.getId(), pageRequest);
-        } else {
+        // Fetch size + 1 to detect whether hasMore is true
+        PageRequest pageRequest = PageRequest.of(0, pageSize + 1);
+        List<Message> messages;
+
+        if (beforeCursor != null && !beforeCursor.isBlank()) {
             CursorData cursorData = decodeCursor(beforeCursor);
-            queryResults = messageRepository.findMessagesBeforeCursor(
+            messages = new ArrayList<>(messageRepository.findMessagesBeforeCursor(
                     conversation.getId(),
                     cursorData.createdAt(),
                     cursorData.id(),
                     pageRequest
-            );
+            ));
+        } else {
+            messages = new ArrayList<>(messageRepository.findNewestMessages(
+                    conversation.getId(),
+                    pageRequest
+            ));
         }
 
-        List<Message> messages = new ArrayList<>(queryResults);
-        boolean hasMore = messages.size() > safeSize;
+        boolean hasMore = messages.size() > pageSize;
         String nextCursor = null;
 
         if (hasMore) {
-            // Because results are in DESC order, the oldest (boundary) message is the last one at index safeSize
-            Message boundary = messages.get(safeSize);
-            nextCursor = encodeCursor(boundary.getCreatedAt(), boundary.getId());
-            // Truncate to safeSize
-            messages = new ArrayList<>(messages.subList(0, safeSize));
+            Message boundaryMessage = messages.get(pageSize);
+            nextCursor = encodeCursor(boundaryMessage.getCreatedAt(), boundaryMessage.getId());
+            messages.remove(pageSize);
         }
 
         // Return messages in chronological (ASC) display order

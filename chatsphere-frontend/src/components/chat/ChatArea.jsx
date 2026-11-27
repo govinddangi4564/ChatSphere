@@ -4,6 +4,7 @@ import { useChatMessages } from '../../hooks/useChatMessages';
 import MessageBubble from './MessageBubble';
 import DateSeparator from './DateSeparator';
 import TypingIndicator from './TypingIndicator';
+import GroupInfoModal from './GroupInfoModal';
 
 const ChatArea = ({
   conversation,
@@ -12,10 +13,13 @@ const ChatArea = ({
   onMessageReceived,
   onToggleArchive,
   onToggleMute,
+  onGroupUpdated,
+  onLeaveGroup,
   loadingAction
 }) => {
   const { user } = useAuth();
   const [inputText, setInputText] = useState('');
+  const [showGroupInfo, setShowGroupInfo] = useState(false);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const typingTimeoutRef = useRef(null);
@@ -33,6 +37,8 @@ const ChatArea = ({
     retryMessage,
     sendTypingIndicator
   } = useChatMessages(conversation?.publicId, user, webSocket, onMessageReceived);
+
+  const isGroup = conversation?.type === 'GROUP' || conversation?.conversationType === 'GROUP';
 
   // Group messages with dates
   const renderMessages = () => {
@@ -61,6 +67,7 @@ const ChatArea = ({
           message={msg}
           isOwnMessage={isOwn}
           isOutgoing={isOwn}
+          isGroup={isGroup}
           onRetry={retryMessage}
         />
       );
@@ -148,19 +155,36 @@ const ChatArea = ({
   }
 
   const partner = conversation.otherParticipant || {};
-  const partnerName = partner.fullName || partner.username || conversation.title || 'Chat';
+  const partnerName = isGroup
+    ? (conversation.title || 'Group')
+    : (partner.fullName || partner.username || conversation.title || 'Chat');
   const partnerUsername = partner.username ? `@${partner.username}` : '';
-  const isOnline = partner.isOnline;
+  const isOnline = !isGroup && partner.isOnline;
+
+  const groupSubtitle = partnerTyping ? (
+    <span className="text-success fw-semibold">typing...</span>
+  ) : conversation.participants ? (
+    `${conversation.participants.length} members`
+  ) : (
+    'Click for group info'
+  );
 
   return (
     <div className="d-flex flex-column h-100 chat-area bg-light">
       {/* Chat Header */}
       <div className="chat-header d-flex align-items-center justify-content-between px-3 py-2 bg-white border-bottom shadow-sm">
-        <div className="d-flex align-items-center">
+        <div
+          className="d-flex align-items-center"
+          style={{ cursor: isGroup ? 'pointer' : 'default' }}
+          onClick={() => isGroup && setShowGroupInfo(true)}
+        >
           {onBack && (
             <button
               className="btn btn-link text-dark p-0 me-2 d-md-none"
-              onClick={onBack}
+              onClick={(e) => {
+                e.stopPropagation();
+                onBack();
+              }}
               aria-label="Back to conversations"
             >
               <i className="bi bi-arrow-left fs-4"></i>
@@ -168,10 +192,23 @@ const ChatArea = ({
           )}
           <div className="position-relative me-3">
             <div
-              className="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold bg-secondary"
+              className={`rounded-circle d-flex align-items-center justify-content-center text-white fw-bold ${
+                isGroup ? 'bg-success' : 'bg-secondary'
+              }`}
               style={{ width: '42px', height: '42px', fontSize: '1.1rem' }}
             >
-              {partnerName.charAt(0).toUpperCase()}
+              {conversation.imageUrl ? (
+                <img
+                  src={conversation.imageUrl}
+                  alt={partnerName}
+                  className="rounded-circle w-100 h-100"
+                  style={{ objectFit: 'cover' }}
+                />
+              ) : isGroup ? (
+                <i className="bi bi-people-fill"></i>
+              ) : (
+                partnerName.charAt(0).toUpperCase()
+              )}
             </div>
             {isOnline && (
               <span
@@ -186,7 +223,9 @@ const ChatArea = ({
               {partnerName}
             </h6>
             <small className="text-muted">
-              {partnerTyping ? (
+              {isGroup ? (
+                groupSubtitle
+              ) : partnerTyping ? (
                 <span className="text-success fw-semibold">typing...</span>
               ) : isOnline ? (
                 <span className="text-success">online</span>
@@ -200,6 +239,15 @@ const ChatArea = ({
         </div>
 
         <div className="d-flex align-items-center text-secondary">
+          {isGroup && (
+            <button
+              className="btn btn-sm btn-link text-secondary p-1 me-1"
+              title="Group Info"
+              onClick={() => setShowGroupInfo(true)}
+            >
+              <i className="bi bi-info-circle fs-5"></i>
+            </button>
+          )}
           {onToggleMute && (
             <button
               className={`btn btn-sm btn-link p-1 me-1 ${conversation.muted ? 'text-danger' : 'text-secondary'}`}
@@ -255,7 +303,7 @@ const ChatArea = ({
           <div className="h-100 d-flex flex-column align-items-center justify-content-center text-muted">
             <i className="bi bi-chat-dots fs-1 mb-2 text-secondary opacity-50"></i>
             <p className="mb-0">No messages yet.</p>
-            <small>Say hello to start the conversation!</small>
+            <small>{isGroup ? 'Send a message to the group!' : 'Say hello to start the conversation!'}</small>
           </div>
         ) : (
           <>
@@ -304,6 +352,22 @@ const ChatArea = ({
           </button>
         </form>
       </div>
+
+      {/* Group Info Modal */}
+      {isGroup && (
+        <GroupInfoModal
+          show={showGroupInfo}
+          onClose={() => setShowGroupInfo(false)}
+          groupPublicId={conversation.publicId}
+          onGroupUpdated={(updated) => {
+            if (onGroupUpdated) onGroupUpdated(updated);
+          }}
+          onLeaveGroup={(publicId) => {
+            setShowGroupInfo(false);
+            if (onLeaveGroup) onLeaveGroup(publicId);
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -273,4 +273,71 @@ describe('ChatArea Component', () => {
       expect(screen.getByText('Older message from history')).toBeInTheDocument();
     });
   });
+
+  it('renders group conversation header, system messages and incoming sender names', async () => {
+    const mockGroupConv = {
+      publicId: 'grp-test-1',
+      title: 'Beta Testers',
+      type: 'GROUP',
+      participants: [
+        { publicId: 'user-alice-id', fullName: 'Alice Smith', username: 'alice', role: 'ADMIN' },
+        { publicId: 'user-bob-id', fullName: 'Bob Jones', username: 'bob', role: 'MEMBER' }
+      ]
+    };
+
+    messageService.getMessages.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          publicId: 'msg-sys-1',
+          conversationPublicId: 'grp-test-1',
+          senderPublicId: 'user-alice-id',
+          senderUsername: 'alice',
+          senderFullName: 'Alice Smith',
+          content: 'Alice created group "Beta Testers"',
+          messageType: 'SYSTEM',
+          createdAt: '2026-11-28T09:00:00Z'
+        },
+        {
+          publicId: 'msg-group-bob',
+          conversationPublicId: 'grp-test-1',
+          senderPublicId: 'user-bob-id',
+          senderUsername: 'bob',
+          senderFullName: 'Bob Jones',
+          content: 'Hey beta group members!',
+          messageType: 'TEXT',
+          createdAt: '2026-11-28T09:05:00Z'
+        }
+      ],
+      nextCursor: null,
+      hasMore: false
+    });
+
+    render(
+      <AuthContext.Provider
+        value={{
+          user: mockUser,
+          isAuthenticated: true,
+          token: 'mock-jwt-token'
+        }}
+      >
+        <ChatArea
+          conversation={mockGroupConv}
+          webSocket={mockWebSocket}
+        />
+      </AuthContext.Provider>
+    );
+
+    // Group Header assertions
+    expect(screen.getByText('Beta Testers')).toBeInTheDocument();
+    expect(screen.getByTitle('Group Info')).toBeInTheDocument();
+
+    await waitFor(() => {
+      // System message assertion
+      expect(screen.getByText('Alice created group "Beta Testers"')).toBeInTheDocument();
+      // Sender name above bubble assertion
+      expect(screen.getByText('Bob Jones')).toBeInTheDocument();
+      expect(screen.getByText('Hey beta group members!')).toBeInTheDocument();
+    });
+  });
 });

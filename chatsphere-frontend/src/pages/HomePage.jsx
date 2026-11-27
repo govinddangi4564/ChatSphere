@@ -3,6 +3,7 @@ import Navbar from '../components/common/Navbar';
 import ConversationList from '../components/chat/ConversationList';
 import ChatArea from '../components/chat/ChatArea';
 import NewConversationModal from '../components/chat/NewConversationModal';
+import NewGroupModal from '../components/chat/NewGroupModal';
 import { conversationService } from '../services/conversationService';
 import { useWebSocket } from '../hooks/useWebSocket';
 
@@ -17,6 +18,7 @@ export default function HomePage() {
   const [actionLoading, setActionLoading] = useState(false);
 
   const [showNewChatModal, setShowNewChatModal] = useState(false);
+  const [showNewGroupModal, setShowNewGroupModal] = useState(false);
 
   const webSocket = useWebSocket();
 
@@ -84,6 +86,30 @@ export default function HomePage() {
     if (newConv?.publicId) {
       loadConversationDetails(newConv.publicId);
     }
+  };
+
+  const handleGroupCreated = (newGroup) => {
+    fetchConversations();
+    if (newGroup?.publicId) {
+      loadConversationDetails(newGroup.publicId);
+    }
+  };
+
+  const handleGroupUpdated = (updatedGroup) => {
+    fetchConversations();
+    if (activeConversation?.publicId === updatedGroup.publicId) {
+      setActiveConversation((prev) => ({
+        ...prev,
+        title: updatedGroup.title,
+        imageUrl: updatedGroup.imageUrl,
+        participants: updatedGroup.members
+      }));
+    }
+  };
+
+  const handleLeaveGroup = () => {
+    handleBackToConversations();
+    fetchConversations();
   };
 
   // Live sidebar update when a message is sent or received
@@ -160,6 +186,7 @@ export default function HomePage() {
             selectedId={selectedConversationId}
             onSelectConversation={handleSelectConversation}
             onOpenNewChatModal={() => setShowNewChatModal(true)}
+            onOpenNewGroupModal={() => setShowNewGroupModal(true)}
             activeFilter={activeFilter}
             onChangeFilter={setActiveFilter}
             loading={loadingList}
@@ -175,6 +202,8 @@ export default function HomePage() {
             onMessageReceived={handleMessageUpdate}
             onToggleArchive={handleToggleArchive}
             onToggleMute={handleToggleMute}
+            onGroupUpdated={handleGroupUpdated}
+            onLeaveGroup={handleLeaveGroup}
             loadingAction={actionLoading || loadingActive}
           />
         </div>
@@ -185,6 +214,13 @@ export default function HomePage() {
         show={showNewChatModal}
         onClose={() => setShowNewChatModal(false)}
         onConversationSelected={handleConversationCreated}
+      />
+
+      {/* New Group Modal */}
+      <NewGroupModal
+        show={showNewGroupModal}
+        onClose={() => setShowNewGroupModal(false)}
+        onGroupCreated={handleGroupCreated}
       />
     </div>
   );

@@ -61,6 +61,9 @@ class MessageServiceTest {
     @Mock
     private BlockedUserRepository blockedUserRepository;
 
+    @Mock
+    private org.springframework.messaging.simp.SimpMessagingTemplate messagingTemplate;
+
     private MessageService messageService;
 
     private User sender;
@@ -77,7 +80,8 @@ class MessageServiceTest {
                 conversationRepository,
                 conversationMemberRepository,
                 userRepository,
-                blockedUserRepository
+                blockedUserRepository,
+                messagingTemplate
         );
 
         sender = new User();

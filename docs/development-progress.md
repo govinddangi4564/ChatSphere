@@ -12,7 +12,7 @@
 | **Phase 5A**| Message Persistence & History over REST (Keyset Pagination, Receipts, Unread Counts) | Completed |
 | **Phase 5B**| Real-Time Messaging Backend (WebSocket, STOMP, Typing Indicators, Real-Time Delivery/Read) | Completed |
 | **Phase 5C**| Real-Time Messaging Frontend (STOMP Client, Chat UI, Unread Badges, Delivery Ticks) | Completed |
-| **Phase 6** | Group Messaging (Group Management, Permissions, Roles) | Pending |
+| **Phase 6** | Group Messaging (Group Management, Permissions, Roles) | Completed |
 | **Phase 7** | Attachments (Cloudinary Storage, Media Previews) | Pending |
 | **Phase 8** | Message Management (Reactions, Replies, Edits, Deletions) | Pending |
 | **Phase 9** | Caching and Performance (Redis, Query Optimization) | Pending |
@@ -344,3 +344,60 @@
 
 ### Next Steps
 - Phase 6: Group Messaging (group creation, group member management, admin roles, group message broadcast).
+
+
+---
+
+## Phase 6 Progress Details (Group Messaging)
+
+### Completed Features
+- **Database Schema**:
+  - `V6__group_details_schema.sql`: Created `group_details` table with foreign key to `conversations(id)` ON DELETE CASCADE, description, creator foreign key, and indexes.
+- **Backend Architecture & Group Lifecycle**:
+  - Reused existing `Conversation` (with `conversation_type = 'GROUP'`) and `ConversationMember` entities.
+  - `GroupDetail` entity & `GroupDetailRepository`.
+  - `GroupService`:
+    - `createGroup`: Creates conversation, group details, assigns creator as `ADMIN`, adds initial members with role `MEMBER`, and dispatches initial system message.
+    - `getGroupDetails`: Validates active membership (`leftAt IS NULL`), loads group metadata, creator summary, current user's role, and active members list.
+    - `updateGroup`: Enforces admin-only permissions. Updates title, description, and image URL; generates system message on title change.
+    - `addMembers`: Enforces admin-only permissions. Handles re-joining for previous members (`leftAt = null`) or new member inserts; generates system message for each added user.
+    - `removeMember`: Enforces admin-only permissions. Disallows self-removal (requires leave group). Sets `leftAt = Instant.now()`; generates system message.
+    - `leaveGroup`: Allows any active member to leave (`leftAt = Instant.now()`). Auto-promotes the oldest active member to `ADMIN` if the last admin leaves; generates system message.
+    - `updateMemberRole`: Enforces admin-only permissions to promote to `ADMIN` or demote to `MEMBER`; generates system message.
+  - `GroupController`: REST endpoints at `/api/groups` (`POST /`, `GET /{id}`, `PUT /{id}`, `POST /{id}/members`, `DELETE /{id}/members/{userPublicId}`, `POST /{id}/leave`, `PUT /{id}/admins/{userPublicId}`).
+- **Security & WebSocket Authorization**:
+  - `MessageService`:
+    - Added `sendSystemMessage(Conversation conversation, String content)`: persists `MessageType.SYSTEM` message, updates last message preview, and broadcasts via `SimpMessagingTemplate` to `/topic/conversations/{id}`.
+    - Active membership validation: removed or left members are strictly blocked from sending messages or retrieving history with `403 Forbidden` (`AccessDeniedException`).
+    - Per-recipient receipts: sends messages and generates receipts for all active group members, incrementing their individual unread counts.
+  - `WebSocketAuthChannelInterceptor`:
+    - Authorizes `/topic/conversations/{id}` and `/typing` subscriptions. Ensures removed or left members cannot subscribe (rejected with `AccessDeniedException`).
+- **Frontend Architecture & Components**:
+  - `groupService.js`: Full API integration for group operations.
+  - `NewGroupModal.jsx`: Modal dialog to create new groups with title, description, image URL, and contact picker.
+  - `GroupInfoModal.jsx`: Group info drawer/dialog showing details, participant count, admin badges, inline member management (promote/demote admin, remove member) for admins, and "Leave Group" button.
+  - `ChatArea.jsx`: Group chat header with group icon, title, member count subtitle, click-to-open info modal, and group info header button.
+  - `MessageBubble.jsx`: Renders sender names in green bold text above incoming group bubbles, and renders system messages as centered WhatsApp-style notice badges.
+  - `ConversationList.jsx`: "New Group" button in sidebar header, group avatar icon display, and active group preview text.
+  - `HomePage.jsx`: Coordinates new group creation, group updates, and leave actions.
+
+### Real Test Execution Results
+- **Backend Test Suite (`mvnw test`)**:
+  - Total Tests Run: 65
+  - Failures: 0, Errors: 0, Skipped: 0
+  - Result: `BUILD SUCCESS` (including 10 unit tests in `GroupServiceTest` and full integration tests in `GroupControllerIntegrationTest`).
+- **Frontend Test Suite (`npm test`)**:
+  - Test Files: 11 passed (11)
+  - Total Tests Run: 32 passed (32), 0 failed.
+  - `GroupInfoModal.test.jsx`: 3 passed.
+  - `NewGroupModal.test.jsx`: 2 passed.
+  - `ChatArea.test.jsx`: 6 passed (including group headers, system messages, and sender names).
+  - All existing tests (`HomePageChat`, `ConversationList`, `LoginPage`, `RegisterPage`, `ContactsPage`, `SettingsPage`, `ProfilePage`, `ProtectedRoute`) passed.
+- **Frontend Production Build (`npm run build`)**:
+  - Result: `vite build` completed cleanly in 1.60s (266 modules transformed, 0 errors).
+
+### Known Bugs
+- None.
+
+### Next Steps
+- Phase 7: Attachments (Cloudinary storage integration, file uploads, previews, validation, and progress).

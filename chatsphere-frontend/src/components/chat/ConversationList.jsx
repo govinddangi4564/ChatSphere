@@ -5,6 +5,7 @@ export default function ConversationList({
   selectedId,
   onSelectConversation,
   onOpenNewChatModal,
+  onOpenNewGroupModal,
   activeFilter,
   onChangeFilter,
   loading
@@ -34,14 +35,26 @@ export default function ConversationList({
       {/* Top Header */}
       <div className="p-3 border-bottom d-flex align-items-center justify-content-between">
         <h5 className="mb-0 fw-bold">Chats</h5>
-        <button
-          className="btn btn-primary-custom btn-sm rounded-circle d-flex align-items-center justify-content-center"
-          style={{ width: '34px', height: '34px' }}
-          onClick={onOpenNewChatModal}
-          title="New Chat"
-        >
-          <i className="bi bi-chat-dots-fill"></i>
-        </button>
+        <div className="d-flex align-items-center gap-1">
+          {onOpenNewGroupModal && (
+            <button
+              className="btn btn-light btn-sm rounded-circle d-flex align-items-center justify-content-center text-secondary border"
+              style={{ width: '34px', height: '34px' }}
+              onClick={onOpenNewGroupModal}
+              title="New Group"
+            >
+              <i className="bi bi-people-fill"></i>
+            </button>
+          )}
+          <button
+            className="btn btn-primary-custom btn-sm rounded-circle d-flex align-items-center justify-content-center"
+            style={{ width: '34px', height: '34px' }}
+            onClick={onOpenNewChatModal}
+            title="New Chat"
+          >
+            <i className="bi bi-chat-dots-fill"></i>
+          </button>
+        </div>
       </div>
 
       {/* Search Input */}
@@ -101,6 +114,8 @@ export default function ConversationList({
           <div>
             {filteredConversations.map((conv) => {
               const isSelected = conv.publicId === selectedId;
+              const isGroup = conv.type === 'GROUP' || conv.conversationType === 'GROUP';
+
               return (
                 <div
                   key={conv.publicId}
@@ -114,6 +129,10 @@ export default function ConversationList({
                       alt={conv.title || 'Avatar'}
                       className="avatar-circle-sm flex-shrink-0"
                     />
+                  ) : isGroup ? (
+                    <div className="avatar-circle-sm flex-shrink-0 bg-success text-white">
+                      <i className="bi bi-people-fill"></i>
+                    </div>
                   ) : (
                     <div className="avatar-circle-sm flex-shrink-0">
                       {conv.title ? conv.title.charAt(0).toUpperCase() : 'C'}
@@ -131,7 +150,7 @@ export default function ConversationList({
 
                     <div className="d-flex justify-content-between align-items-center">
                       <small className="text-muted text-truncate" style={{ fontSize: '0.82rem' }}>
-                        {conv.lastMessagePreview || 'Direct Message'}
+                        {conv.lastMessagePreview || (isGroup ? 'Group Chat' : 'Direct Message')}
                       </small>
 
                       <div className="d-flex align-items-center gap-1">

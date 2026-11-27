@@ -18,10 +18,20 @@ public interface ConversationMemberRepository extends JpaRepository<Conversation
 
     Optional<ConversationMember> findByConversationIdAndUserId(Long conversationId, Long userId);
 
+    Optional<ConversationMember> findByConversationIdAndUserIdAndLeftAtIsNull(Long conversationId, Long userId);
+
     @Query("SELECT cm FROM ConversationMember cm " +
            "JOIN FETCH cm.conversation c " +
            "WHERE c.publicId = :publicId AND cm.user.id = :userId")
     Optional<ConversationMember> findByConversationPublicIdAndUserId(
+            @Param("publicId") String publicId,
+            @Param("userId") Long userId
+    );
+
+    @Query("SELECT cm FROM ConversationMember cm " +
+           "JOIN FETCH cm.conversation c " +
+           "WHERE c.publicId = :publicId AND cm.user.id = :userId AND cm.leftAt IS NULL")
+    Optional<ConversationMember> findByConversationPublicIdAndUserIdAndLeftAtIsNull(
             @Param("publicId") String publicId,
             @Param("userId") Long userId
     );
@@ -31,6 +41,7 @@ public interface ConversationMemberRepository extends JpaRepository<Conversation
     @Query("SELECT cm FROM ConversationMember cm " +
            "JOIN cm.conversation c " +
            "WHERE cm.user.id = :userId " +
+           "AND cm.leftAt IS NULL " +
            "AND (:type IS NULL OR c.conversationType = :type) " +
            "AND (:archived IS NULL OR cm.archived = :archived) " +
            "AND (:muted IS NULL OR cm.muted = :muted) " +
@@ -46,11 +57,23 @@ public interface ConversationMemberRepository extends JpaRepository<Conversation
 
     @Query("SELECT cm FROM ConversationMember cm " +
            "JOIN FETCH cm.user u " +
-           "WHERE cm.conversation.id IN :conversationIds")
+           "WHERE cm.conversation.id IN :conversationIds AND cm.leftAt IS NULL")
     List<ConversationMember> findAllByConversationIdIn(@Param("conversationIds") Collection<Long> conversationIds);
 
     @Query("SELECT cm FROM ConversationMember cm " +
            "JOIN FETCH cm.user u " +
            "WHERE cm.conversation.id = :conversationId")
     List<ConversationMember> findAllByConversationId(@Param("conversationId") Long conversationId);
+
+    @Query("SELECT cm FROM ConversationMember cm " +
+           "JOIN FETCH cm.user u " +
+           "WHERE cm.conversation.id = :conversationId AND cm.leftAt IS NULL " +
+           "ORDER BY cm.joinedAt ASC")
+    List<ConversationMember> findAllActiveByConversationId(@Param("conversationId") Long conversationId);
+
+    @Query("SELECT COUNT(cm) FROM ConversationMember cm " +
+           "WHERE cm.conversation.id = :conversationId AND cm.role = com.chatsphere.common.enums.MemberRole.ADMIN AND cm.leftAt IS NULL")
+    long countActiveAdminsByConversationId(@Param("conversationId") Long conversationId);
+
+    Optional<ConversationMember> findFirstByConversationIdAndLeftAtIsNullOrderByJoinedAtAsc(Long conversationId);
 }

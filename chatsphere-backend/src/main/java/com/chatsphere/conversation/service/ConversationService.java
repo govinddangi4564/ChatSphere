@@ -185,10 +185,17 @@ public class ConversationService {
         ConversationMember membership = conversationMemberRepository.findByConversationPublicIdAndUserId(publicId, currentUser.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", publicId));
 
+        if (membership.getLeftAt() != null) {
+            throw new org.springframework.security.access.AccessDeniedException("User is not an active member of this conversation");
+        }
+
         Conversation conversation = membership.getConversation();
         List<ConversationMember> allMembers = conversationMemberRepository.findAllByConversationId(conversation.getId());
+        List<ConversationMember> activeMembers = allMembers.stream()
+                .filter(m -> m.getLeftAt() == null)
+                .toList();
 
-        List<ConversationParticipantResponse> participants = allMembers.stream()
+        List<ConversationParticipantResponse> participants = activeMembers.stream()
                 .map(m -> buildParticipantDto(currentUser.getId(), m.getUser(), m.getRole().name()))
                 .toList();
 
@@ -226,6 +233,10 @@ public class ConversationService {
         ConversationMember membership = conversationMemberRepository.findByConversationPublicIdAndUserId(publicId, currentUser.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", publicId));
 
+        if (membership.getLeftAt() != null) {
+            throw new org.springframework.security.access.AccessDeniedException("User is not an active member of this conversation");
+        }
+
         membership.setArchived(archived);
         conversationMemberRepository.save(membership);
     }
@@ -234,6 +245,10 @@ public class ConversationService {
         User currentUser = getUserByUsername(currentUsername);
         ConversationMember membership = conversationMemberRepository.findByConversationPublicIdAndUserId(publicId, currentUser.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", publicId));
+
+        if (membership.getLeftAt() != null) {
+            throw new org.springframework.security.access.AccessDeniedException("User is not an active member of this conversation");
+        }
 
         membership.setMuted(muted);
         conversationMemberRepository.save(membership);
