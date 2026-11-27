@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useChatMessages } from '../../hooks/useChatMessages';
+import messageService from '../../services/messageService';
 import attachmentService from '../../services/attachmentService';
 import MessageBubble from './MessageBubble';
 import DateSeparator from './DateSeparator';
@@ -16,7 +17,8 @@ const ChatArea = ({
   onToggleMute,
   onGroupUpdated,
   onLeaveGroup,
-  loadingAction
+  loadingAction,
+  onConversationCleared
 }) => {
   const { user } = useAuth();
   const [inputText, setInputText] = useState('');
@@ -25,6 +27,19 @@ const ChatArea = ({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState(null);
   const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [replyingTo, setReplyingTo] = useState(null);
+
+  // Pinned messages & search
+  const [pinnedMessages, setPinnedMessages] = useState([]);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+
+  // Forward dialog
+  const [forwardingMsg, setForwardingMsg] = useState(null);
+  const [targetConvId, setTargetConvId] = useState('');
+
   const fileInputRef = useRef(null);
   const abortControllerRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -46,6 +61,107 @@ const ChatArea = ({
   } = useChatMessages(conversation?.publicId, user, webSocket, onMessageReceived);
 
   const isGroup = conversation?.type === 'GROUP' || conversation?.conversationType === 'GROUP';
+
+  // Load pinned messages on conversation change
+  useEffect(() => {
+    if (conversation?.publicId) {
+      messageService.getPinnedMessages(conversation.publicId)
+        .then((pins) => setPinnedMessages(pins || []))
+        .catch(() => setPinnedMessages([]));
+    }
+  }, [conversation?.publicId]);
+
+  // Handle Search
+  const handleSearch = async (e) => {
+    e?.preventDefault();
+    if (!searchQuery.trim() || !conversation?.publicId) return;
+
+    setSearching(true);
+    try {
+      const res = await messageService.searchMessages({
+        conversationId: conversation.publicId,
+        query: searchQuery.trim(),
+        page: 0,
+        size: 20
+      });
+      setSearchResults(res?.content || []);
+    } catch (err) {
+      console.error('Search failed', err);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  // Actions
+  const handleEditMessage = async (msgPublicId, newContent) => {
+    try {
+      await messageService.editMessage(msgPublicId, newContent);
+    } catch (err) {
+      console.error('Failed to edit message', err);
+    }
+  };
+
+  const handleDeleteMessage = async (msgPublicId, forEveryone) => {
+    try {
+      await messageService.deleteMessage(msgPublicId, forEveryone);
+    } catch (err) {
+      console.error('Failed to delete message', err);
+    }
+  };
+
+  const handleReact = async (msgPublicId, emoji) => {
+    try {
+      await messageService.addReaction(msgPublicId, emoji);
+    } catch (err) {
+      console.error('Failed to add reaction', err);
+    }
+  };
+
+  const handleRemoveReaction = async (msgPublicId) => {
+    try {
+      await messageService.removeReaction(msgPublicId);
+    } catch (err) {
+      console.error('Failed to remove reaction', err);
+    }
+  };
+
+  const handlePin = async (msgPublicId, pin) => {
+    try {
+      if (pin) {
+        await messageService.pinMessage(msgPublicId);
+      } else {
+        await messageService.unpinMessage(msgPublicId);
+      }
+      const updatedPins = await messageService.getPinnedMessages(conversation.publicId);
+      setPinnedMessages(updatedPins || []);
+    } catch (err) {
+      console.error('Failed to toggle pin', err);
+    }
+  };
+
+  const handleForwardSubmit = async () => {
+    if (!forwardingMsg || !targetConvId.trim()) return;
+    try {
+      await messageService.forwardMessage(forwardingMsg.publicId, targetConvId.trim());
+      setForwardingMsg(null);
+      setTargetConvId('');
+    } catch (err) {
+      console.error('Failed to forward message', err);
+    }
+  };
+
+  const handleDeleteConversationForMe = async () => {
+    if (!conversation?.publicId) return;
+    if (window.confirm('Are you sure you want to clear this chat history for yourself?')) {
+      try {
+        await messageService.deleteConversationForMe(conversation.publicId);
+        if (onConversationCleared) onConversationCleared(conversation.publicId);
+        window.location.reload();
+      } catch (err) {
+        console.error('Failed to clear conversation', err);
+      }
+    }
+  };
 
   // Group messages with dates
   const renderMessages = () => {
@@ -69,28 +185,35 @@ const ChatArea = ({
       const isOwn = msg.senderPublicId === user?.publicId || msg.senderUsername === user?.username;
 
       elements.push(
-        <MessageBubble
-          key={msg.clientMessageId || msg.publicId || `msg-${idx}`}
-          message={msg}
-          isOwnMessage={isOwn}
-          isOutgoing={isOwn}
-          isGroup={isGroup}
-          onRetry={retryMessage}
-        />
+        <div id={`msg-${msg.publicId}`} key={msg.clientMessageId || msg.publicId || `msg-${idx}`}>
+          <MessageBubble
+            message={msg}
+            isOwnMessage={isOwn}
+            isOutgoing={isOwn}
+            isGroup={isGroup}
+            onRetry={retryMessage}
+            onReply={(m) => setReplyingTo(m)}
+            onReact={handleReact}
+            onRemoveReaction={handleRemoveReaction}
+            onEdit={handleEditMessage}
+            onDelete={handleDeleteMessage}
+            onForward={(m) => setForwardingMsg(m)}
+            onPin={handlePin}
+            currentUser={user}
+          />
+        </div>
       );
     });
 
     return elements;
   };
 
-  // Scroll to bottom on initial load or new outgoing messages
   useEffect(() => {
     if (!loadingMore && !isPrependingRef.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages.length, loadingMore]);
 
-  // Adjust scroll position after prepending older messages
   useEffect(() => {
     if (isPrependingRef.current && messagesContainerRef.current) {
       const newScrollHeight = messagesContainerRef.current.scrollHeight;
@@ -100,7 +223,6 @@ const ChatArea = ({
     }
   }, [messages]);
 
-  // Upward infinite scroll handler
   const handleScroll = useCallback(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
@@ -116,7 +238,6 @@ const ChatArea = ({
     const val = e.target.value;
     setInputText(val);
 
-    // Send typing event
     sendTypingIndicator(true);
 
     if (typingTimeoutRef.current) {
@@ -132,9 +253,7 @@ const ChatArea = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Reset input so re-selecting same file triggers change
     e.target.value = '';
-
     setUploading(true);
     setUploadProgress(0);
     setUploadError(null);
@@ -188,9 +307,17 @@ const ChatArea = ({
     const attachmentIds = pendingAttachments.map((a) => a.publicId);
     const primaryType = pendingAttachments.length > 0 ? pendingAttachments[0].fileType : 'TEXT';
 
-    sendMessage(trimmed, attachmentIds, primaryType, pendingAttachments);
+    sendMessage(
+      trimmed,
+      attachmentIds,
+      primaryType,
+      pendingAttachments,
+      replyingTo
+    );
+
     setInputText('');
     setPendingAttachments([]);
+    setReplyingTo(null);
     setUploadError(null);
   };
 
@@ -229,7 +356,7 @@ const ChatArea = ({
   );
 
   return (
-    <div className="d-flex flex-column h-100 chat-area bg-light">
+    <div className="d-flex flex-column h-100 chat-area bg-light position-relative">
       {/* Chat Header */}
       <div className="chat-header d-flex align-items-center justify-content-between px-3 py-2 bg-white border-bottom shadow-sm">
         <div
@@ -260,11 +387,8 @@ const ChatArea = ({
                 <img
                   src={conversation.imageUrl}
                   alt={partnerName}
-                  className="rounded-circle w-100 h-100"
-                  style={{ objectFit: 'cover' }}
+                  className="rounded-circle w-100 h-100 object-fit-cover"
                 />
-              ) : isGroup ? (
-                <i className="bi bi-people-fill"></i>
               ) : (
                 partnerName.charAt(0).toUpperCase()
               )}
@@ -278,77 +402,159 @@ const ChatArea = ({
             )}
           </div>
           <div>
-            <h6 className="mb-0 fw-semibold text-truncate" style={{ maxWidth: '240px' }}>
-              {partnerName}
-            </h6>
+            <h6 className="mb-0 fw-semibold text-dark">{partnerName}</h6>
             <small className="text-muted">
-              {isGroup ? (
-                groupSubtitle
-              ) : partnerTyping ? (
-                <span className="text-success fw-semibold">typing...</span>
-              ) : isOnline ? (
+              {isGroup ? groupSubtitle : isOnline ? (
                 <span className="text-success">online</span>
-              ) : partnerUsername ? (
-                partnerUsername
               ) : (
-                'offline'
+                partnerUsername
               )}
             </small>
           </div>
         </div>
 
-        <div className="d-flex align-items-center text-secondary">
+        {/* Header Actions */}
+        <div className="d-flex align-items-center gap-1">
           {isGroup && (
             <button
-              className="btn btn-sm btn-link text-secondary p-1 me-1"
-              title="Group Info"
+              type="button"
+              className="btn btn-link text-secondary p-2"
               onClick={() => setShowGroupInfo(true)}
+              title="Group Info"
             >
               <i className="bi bi-info-circle fs-5"></i>
             </button>
           )}
-          {onToggleMute && (
-            <button
-              className={`btn btn-sm btn-link p-1 me-1 ${conversation.muted ? 'text-danger' : 'text-secondary'}`}
-              onClick={() => onToggleMute(conversation.publicId, !conversation.muted)}
-              disabled={loadingAction}
-              title={conversation.muted ? 'Unmute' : 'Mute'}
-            >
-              <i className={`bi ${conversation.muted ? 'bi-bell-slash-fill' : 'bi-bell'}`}></i>
-            </button>
-          )}
+          <button
+            type="button"
+            className="btn btn-link text-secondary p-2"
+            onClick={() => setShowSearch((prev) => !prev)}
+            title="Search messages"
+          >
+            <i className="bi bi-search fs-5"></i>
+          </button>
+          <button
+            type="button"
+            className="btn btn-link text-secondary p-2"
+            onClick={handleDeleteConversationForMe}
+            title="Clear chat for me"
+          >
+            <i className="bi bi-trash fs-5"></i>
+          </button>
           {onToggleArchive && (
             <button
-              className={`btn btn-sm btn-link p-1 me-1 ${conversation.archived ? 'text-primary' : 'text-secondary'}`}
-              onClick={() => onToggleArchive(conversation.publicId, !conversation.archived)}
+              type="button"
+              className="btn btn-link text-secondary p-2"
+              onClick={() => onToggleArchive(conversation.publicId, !conversation.isArchived)}
               disabled={loadingAction}
-              title={conversation.archived ? 'Unarchive' : 'Archive'}
+              title={conversation.isArchived ? 'Unarchive chat' : 'Archive chat'}
             >
-              <i className={`bi ${conversation.archived ? 'bi-archive-fill' : 'bi-archive'}`}></i>
+              <i className={`bi bi-archive${conversation.isArchived ? '-fill text-success' : ''} fs-5`}></i>
             </button>
           )}
-          <button className="btn btn-sm btn-link text-secondary p-1" title="More options">
-            <i className="bi bi-three-dots-vertical fs-5"></i>
-          </button>
+          {onToggleMute && (
+            <button
+              type="button"
+              className="btn btn-link text-secondary p-2"
+              onClick={() => onToggleMute(conversation.publicId, !conversation.isMuted)}
+              disabled={loadingAction}
+              title={conversation.isMuted ? 'Unmute chat' : 'Mute chat'}
+            >
+              <i className={`bi bi-bell${conversation.isMuted ? '-slash-fill text-warning' : ''} fs-5`}></i>
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Messages Scroll Area */}
+      {/* Pinned Messages Bar */}
+      {pinnedMessages.length > 0 && (
+        <div className="bg-warning-subtle border-bottom px-3 py-1 d-flex align-items-center justify-content-between" style={{ fontSize: '0.82rem' }}>
+          <div className="d-flex align-items-center gap-2 text-truncate">
+            <i className="bi bi-pin-angle-fill text-warning"></i>
+            <span className="fw-semibold">Pinned:</span>
+            <span
+              className="text-truncate cursor-pointer text-dark"
+              style={{ cursor: 'pointer', maxWidth: '350px' }}
+              onClick={() => {
+                const el = document.getElementById(`msg-${pinnedMessages[0].publicId}`);
+                el?.scrollIntoView({ behavior: 'smooth' });
+              }}
+            >
+              {pinnedMessages[0].content || '[Attachment]'}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-link text-muted p-0"
+            style={{ fontSize: '0.75rem' }}
+            onClick={() => handlePin(pinnedMessages[0].publicId, false)}
+            title="Unpin message"
+          >
+            Unpin
+          </button>
+        </div>
+      )}
+
+      {/* Search Bar Panel */}
+      {showSearch && (
+        <div className="p-2 bg-white border-bottom shadow-sm">
+          <form onSubmit={handleSearch} className="d-flex align-items-center gap-2">
+            <input
+              type="text"
+              className="form-control form-control-sm"
+              placeholder="Search in conversation..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              autoFocus
+            />
+            <button type="submit" className="btn btn-primary btn-sm px-3" disabled={searching}>
+              {searching ? '...' : 'Search'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm"
+              onClick={() => {
+                setShowSearch(false);
+                setSearchResults([]);
+                setSearchQuery('');
+              }}
+            >
+              Close
+            </button>
+          </form>
+
+          {/* Search Results Drawer */}
+          {searchResults.length > 0 && (
+            <div className="mt-2 border-top pt-1" style={{ maxHeight: '150px', overflowY: 'auto' }}>
+              <small className="text-muted fw-semibold">Found {searchResults.length} message(s):</small>
+              {searchResults.map((sm) => (
+                <div
+                  key={sm.publicId}
+                  className="p-1 border-bottom d-flex align-items-center justify-content-between cursor-pointer"
+                  style={{ cursor: 'pointer', fontSize: '0.8rem' }}
+                  onClick={() => {
+                    const el = document.getElementById(`msg-${sm.publicId}`);
+                    el?.scrollIntoView({ behavior: 'smooth' });
+                  }}
+                >
+                  <span className="text-truncate" style={{ maxWidth: '300px' }}>{sm.content}</span>
+                  <small className="text-muted">{new Date(sm.createdAt).toLocaleDateString()}</small>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Message History Container */}
       <div
         ref={messagesContainerRef}
+        className="chat-messages-container flex-grow-1 p-3 overflow-auto"
         onScroll={handleScroll}
-        className="chat-messages-container flex-grow-1 overflow-auto p-3"
-        style={{
-          backgroundImage: 'radial-gradient(#e0e0e0 1px, transparent 1px)',
-          backgroundSize: '20px 20px',
-          backgroundColor: '#efeae2'
-        }}
       >
         {loadingMore && (
           <div className="text-center my-2">
-            <div className="spinner-border spinner-border-sm text-secondary" role="status">
-              <span className="visually-hidden">Loading older messages...</span>
-            </div>
+            <div className="spinner-border spinner-border-sm text-secondary" role="status"></div>
           </div>
         )}
 
@@ -375,6 +581,25 @@ const ChatArea = ({
 
       {/* Message Input Bar */}
       <div className="chat-input-bar bg-white p-2 border-top">
+        {/* Reply Preview Bar */}
+        {replyingTo && (
+          <div className="p-2 mb-2 bg-light border-start border-4 border-success rounded d-flex align-items-center justify-content-between">
+            <div className="text-truncate me-2" style={{ fontSize: '0.8rem' }}>
+              <span className="fw-bold text-success d-block">
+                Replying to {replyingTo.senderFullName || replyingTo.senderUsername}
+              </span>
+              <span className="text-muted text-truncate">{replyingTo.content || '[Attachment]'}</span>
+            </div>
+            <button
+              type="button"
+              className="btn-close"
+              style={{ fontSize: '0.65rem' }}
+              onClick={() => setReplyingTo(null)}
+              aria-label="Cancel reply"
+            ></button>
+          </div>
+        )}
+
         {/* Upload Error Banner */}
         {uploadError && (
           <div className="alert alert-danger py-1 px-3 mb-2 d-flex align-items-center justify-content-between" style={{ fontSize: '0.85rem' }}>
@@ -488,6 +713,37 @@ const ChatArea = ({
           </button>
         </form>
       </div>
+
+      {/* Forward Message Modal */}
+      {forwardingMsg && (
+        <div className="modal fade show d-block" tabIndex="-1" style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1060 }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content shadow">
+              <div className="modal-header">
+                <h5 className="modal-title">Forward Message</h5>
+                <button type="button" className="btn-close" onClick={() => setForwardingMsg(null)}></button>
+              </div>
+              <div className="modal-body">
+                <div className="p-2 mb-3 bg-light rounded text-muted" style={{ fontSize: '0.85rem' }}>
+                  {forwardingMsg.content || '[Attachment]'}
+                </div>
+                <label className="form-label small fw-semibold">Target Conversation Public ID</label>
+                <input
+                  type="text"
+                  className="form-control form-control-sm"
+                  placeholder="Enter recipient or group conversation ID..."
+                  value={targetConvId}
+                  onChange={(e) => setTargetConvId(e.target.value)}
+                />
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setForwardingMsg(null)}>Cancel</button>
+                <button type="button" className="btn btn-success btn-sm" onClick={handleForwardSubmit} disabled={!targetConvId.trim()}>Forward</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Group Info Modal */}
       {isGroup && (

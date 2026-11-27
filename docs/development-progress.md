@@ -14,7 +14,7 @@
 | **Phase 5C**| Real-Time Messaging Frontend (STOMP Client, Chat UI, Unread Badges, Delivery Ticks) | Completed |
 | **Phase 6** | Group Messaging (Group Management, Permissions, Roles) | Completed |
 | **Phase 7** | Attachments (Cloudinary Storage, Media Previews) | Completed |
-| **Phase 8** | Message Management (Reactions, Replies, Edits, Deletions) | Pending |
+| **Phase 8** | Message Management (Reactions, Replies, Edits, Deletions) | Completed |
 | **Phase 9** | Caching and Performance (Redis, Query Optimization) | Pending |
 | **Phase 10** | Notifications and Events (Kafka, In-App Notifications) | Pending |
 | **Phase 11** | End-to-End Encryption (Client-side Cryptography) | Pending |
@@ -428,3 +428,47 @@
   - Backend tests: 74 passing tests in `mvnw test` including `FileValidationServiceTest` and `AttachmentServiceTest`.
   - Frontend tests: 35 passing tests in Vitest including `MessageBubbleAttachment.test.jsx`.
   - Production build: `npm run build` completed cleanly without errors.
+
+
+---
+
+## Phase 8 Progress Details (Message Management)
+
+### Completed Features
+- **Database Schema**:
+  - `V8__message_management_schema.sql`:
+    - `message_reactions` table with unique constraint on `(message_id, user_id)` and foreign keys to messages and users.
+    - `message_deletions` table with unique constraint on `(message_id, user_id)` for tracking "Delete for me".
+    - Added `is_pinned` (boolean), `pinned_at` (timestamp), and `pinned_by` (foreign key to users) columns and index to `messages`.
+    - Added `cleared_at` (timestamp) column to `conversation_members` for clearing conversation history per user.
+- **Backend Architecture & Endpoints**:
+  - **Edit Message (`PUT /api/messages/{publicId}`)**: Authorizes sender, marks message `edited = true`, broadcasts `MESSAGE_EDITED` over WebSocket topic.
+  - **Delete Message (`DELETE /api/messages/{publicId}?forEveryone=true|false`)**:
+    - "Delete for me" stores record in `message_deletions` and excludes from user's queries.
+    - "Delete for everyone" enforces 2-hour configurable time limit and sender/admin authorization, replaces content with *"This message was deleted"*, sets `deletedForEveryone = true`, broadcasts `MESSAGE_DELETED`.
+  - **Delete Conversation for Me (`DELETE /api/conversations/{publicId}`)**: Sets `cleared_at = Instant.now()`, hides past messages without affecting other participants.
+  - **Reply Snippets**: Stores `reply_to_message_id`, returns `ReplySnippet` (sender, preview, messageType) in `MessageResponse`.
+  - **Forward Message (`POST /api/messages/{publicId}/forward`)**: Revalidates destination membership, checks block status, clones attachments, updates conversation preview and unread counts.
+  - **Reactions (`POST & DELETE /api/messages/{publicId}/reactions`)**: Adds, updates, or removes user emoji reaction; broadcasts `MESSAGE_REACTION`.
+  - **Pin / Unpin (`POST & DELETE /api/messages/{publicId}/pin`, `GET /api/conversations/{publicId}/pinned`)**: Toggles pin state and retrieves pinned messages.
+  - **Message Search (`GET /api/messages/search`)**: Searches text content with query and date filters (`startDate`, `endDate`), strictly restricted to accessible conversations where user is an active member, preventing data leakage.
+- **Frontend Architecture & UI**:
+  - `messageService.js`: Added methods for `editMessage`, `deleteMessage`, `forwardMessage`, `addReaction`, `removeReaction`, `pinMessage`, `unpinMessage`, `getPinnedMessages`, `searchMessages`, and `deleteConversationForMe`.
+  - `useChatMessages.js`: Handles real-time events for message edits, deletions, reactions, and pins.
+  - `MessageBubble.jsx`:
+    - Dropdown context menu (Reply, React, Forward, Pin, Edit, Delete for me, Delete for everyone).
+    - Quick emoji picker popover (👍, ❤️, 😂, 😮, 😢, 🙏).
+    - Inline reactions display pill with reaction count and user tooltip.
+    - Inline edit form with save and cancel buttons.
+    - Forwarded badge and `(edited)` timestamp marker.
+    - Reply quote bubble snippet above message content.
+  - `ChatArea.jsx`:
+    - Sticky pinned messages bar with click-to-scroll to message.
+    - Slide-down message search drawer with date filters and jump-to-message.
+    - Quoted reply bar above the input box with cancel button.
+    - Forward message dialog modal.
+    - Clear chat for me button in header.
+- **Verification & Testing**:
+  - Backend tests: **81 passing tests** in `mvnw test` including `MessageManagementTest`, `MessageServiceTest`, and `ChatWebSocketIntegrationTest`.
+  - Frontend tests: **13 test suites, 38 passing tests** in Vitest including `MessageBubbleManagement.test.jsx`.
+  - Production build: `npm run build` completed successfully.

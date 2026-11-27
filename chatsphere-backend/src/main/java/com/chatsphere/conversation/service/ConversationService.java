@@ -314,4 +314,18 @@ public class ConversationService {
         return userRepository.findByPublicId(publicId)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "publicId", publicId));
     }
+
+    @Transactional
+    public void deleteConversationForMe(String currentUsername, String conversationPublicId) {
+        User user = getUserByUsername(currentUsername);
+        Conversation conversation = conversationRepository.findByPublicId(conversationPublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
+
+        ConversationMember member = conversationMemberRepository.findByConversationIdAndUserId(conversation.getId(), user.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
+
+        member.setClearedAt(Instant.now());
+        member.setUnreadCount(0);
+        conversationMemberRepository.save(member);
+    }
 }

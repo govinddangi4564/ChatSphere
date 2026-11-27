@@ -61,6 +61,16 @@ public class Message {
     @Column(name = "deleted_for_everyone", nullable = false)
     private boolean deletedForEveryone = false;
 
+    @Column(name = "is_pinned", nullable = false)
+    private boolean isPinned = false;
+
+    @Column(name = "pinned_at")
+    private Instant pinnedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "pinned_by")
+    private User pinnedBy;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

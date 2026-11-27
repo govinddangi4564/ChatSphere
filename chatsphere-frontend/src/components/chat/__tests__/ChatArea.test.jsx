@@ -5,12 +5,26 @@ import ChatArea from '../ChatArea';
 import { AuthContext } from '../../../context/AuthContext';
 import { messageService } from '../../../services/messageService';
 
-vi.mock('../../../services/messageService', () => ({
-  messageService: {
+vi.mock('../../../services/messageService', () => {
+  const mockService = {
     getMessages: vi.fn(),
-    sendMessage: vi.fn()
-  }
-}));
+    sendMessage: vi.fn(),
+    getPinnedMessages: vi.fn().mockResolvedValue([]),
+    editMessage: vi.fn(),
+    deleteMessage: vi.fn(),
+    forwardMessage: vi.fn(),
+    addReaction: vi.fn(),
+    removeReaction: vi.fn(),
+    pinMessage: vi.fn(),
+    unpinMessage: vi.fn(),
+    searchMessages: vi.fn().mockResolvedValue({ content: [] }),
+    deleteConversationForMe: vi.fn()
+  };
+  return {
+    messageService: mockService,
+    default: mockService
+  };
+});
 
 describe('ChatArea Component', () => {
   const mockUser = {

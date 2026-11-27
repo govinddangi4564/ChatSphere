@@ -74,7 +74,7 @@ export function useChatMessages(conversationPublicId, currentUser, webSocket, on
 
   // Send message optimistically
   const sendMessage = useCallback(
-    async (content, attachmentPublicIds = [], messageType = null, attachments = []) => {
+    async (content, attachmentPublicIds = [], messageType = null, attachments = [], replyTo = null) => {
       const hasContent = content && content.trim();
       const hasAttachments = attachmentPublicIds && attachmentPublicIds.length > 0;
       if (!hasContent && !hasAttachments || !conversationPublicId) return;
@@ -92,6 +92,7 @@ export function useChatMessages(conversationPublicId, currentUser, webSocket, on
         content: hasContent ? content.trim() : '',
         messageType: computedType,
         attachments: attachments || [],
+        replyToMessage: replyTo,
         createdAt: new Date().toISOString(),
         status: 'SENDING'
       };
@@ -104,7 +105,8 @@ export function useChatMessages(conversationPublicId, currentUser, webSocket, on
           clientMessageId,
           content: hasContent ? content.trim() : '',
           messageType: computedType,
-          attachmentPublicIds: attachmentPublicIds || []
+          attachmentPublicIds: attachmentPublicIds || [],
+          replyToMessagePublicId: replyTo?.publicId || null
         };
         const restResult = await webSocket.sendChatMessage(payload);
 
@@ -196,7 +198,46 @@ export function useChatMessages(conversationPublicId, currentUser, webSocket, on
   // Reconcile incoming message from WebSocket broadcast
   const handleIncomingMessage = useCallback(
     (newMsg) => {
-      if (!newMsg || newMsg.conversationPublicId !== conversationPublicId) return;
+      if (!newMsg) return;
+
+      // Handle custom WebSocket broadcast events (edit, delete, reaction, pin)
+      if (newMsg.type === 'MESSAGE_EDITED' && newMsg.message) {
+        setMessages((prev) =>
+          prev.map((m) => (m.publicId === newMsg.message.publicId ? { ...m, ...newMsg.message } : m))
+        );
+        return;
+      }
+
+      if (newMsg.type === 'MESSAGE_DELETED') {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.publicId === newMsg.messagePublicId
+              ? { ...m, content: 'This message was deleted', deletedForEveryone: true }
+              : m
+          )
+        );
+        return;
+      }
+
+      if (newMsg.type === 'MESSAGE_REACTION' && newMsg.message) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.publicId === newMsg.message.publicId ? { ...m, reactions: newMsg.message.reactions } : m
+          )
+        );
+        return;
+      }
+
+      if (newMsg.type === 'MESSAGE_PINNED' && newMsg.message) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.publicId === newMsg.message.publicId ? { ...m, isPinned: newMsg.message.isPinned } : m
+          )
+        );
+        return;
+      }
+
+      if (newMsg.conversationPublicId !== conversationPublicId) return;
 
       setMessages((prev) => {
         // 1. Check if it matches an optimistic message by clientMessageId

@@ -19,7 +19,9 @@ public record SendMessageRequest(
 
         MessageType messageType,
 
-        List<String> attachmentPublicIds
+        List<String> attachmentPublicIds,
+
+        String replyToMessagePublicId
 ) {
     public SendMessageRequest(
             String conversationPublicId,
@@ -27,6 +29,16 @@ public record SendMessageRequest(
             String content,
             MessageType messageType
     ) {
-        this(conversationPublicId, clientMessageId, content, messageType, List.of());
+        this(conversationPublicId, clientMessageId, content, messageType, List.of(), null);
+    }
+
+    public SendMessageRequest(
+            String conversationPublicId,
+            String clientMessageId,
+            String content,
+            MessageType messageType,
+            List<String> attachmentPublicIds
+    ) {
+        this(conversationPublicId, clientMessageId, content, messageType, attachmentPublicIds, null);
     }
 }

@@ -92,4 +92,14 @@ public class ConversationController {
         conversationService.muteConversation(userDetails.getUsername(), publicId, muted);
         return ResponseEntity.ok(ApiResponse.success(muted ? "Conversation muted" : "Conversation unmuted", null));
     }
+
+    @DeleteMapping("/{publicId}")
+    @Operation(summary = "Delete conversation for me", description = "Clears message history for the current user without deleting it for others")
+    public ResponseEntity<ApiResponse<Void>> deleteConversationForMe(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @PathVariable String publicId
+    ) {
+        conversationService.deleteConversationForMe(userDetails.getUsername(), publicId);
+        return ResponseEntity.ok(ApiResponse.success("Conversation cleared for you", null));
+    }
 }

@@ -52,6 +52,9 @@ public class ConversationMember {
     @Column(name = "unread_count", nullable = false)
     private int unreadCount = 0;
 
+    @Column(name = "cleared_at")
+    private Instant clearedAt;
+
     @PrePersist
     public void prePersist() {
         if (this.joinedAt == null) {

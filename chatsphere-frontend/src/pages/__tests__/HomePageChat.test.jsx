@@ -17,12 +17,26 @@ vi.mock('../../services/conversationService', () => ({
   }
 }));
 
-vi.mock('../../services/messageService', () => ({
-  messageService: {
+vi.mock('../../services/messageService', () => {
+  const mockService = {
     getMessages: vi.fn().mockResolvedValue({ success: true, data: [], nextCursor: null, hasMore: false }),
-    sendMessage: vi.fn()
-  }
-}));
+    sendMessage: vi.fn(),
+    getPinnedMessages: vi.fn().mockResolvedValue([]),
+    editMessage: vi.fn(),
+    deleteMessage: vi.fn(),
+    forwardMessage: vi.fn(),
+    addReaction: vi.fn(),
+    removeReaction: vi.fn(),
+    pinMessage: vi.fn(),
+    unpinMessage: vi.fn(),
+    searchMessages: vi.fn().mockResolvedValue({ content: [] }),
+    deleteConversationForMe: vi.fn()
+  };
+  return {
+    messageService: mockService,
+    default: mockService
+  };
+});
 
 vi.mock('../../services/websocketService', () => ({
   websocketService: {

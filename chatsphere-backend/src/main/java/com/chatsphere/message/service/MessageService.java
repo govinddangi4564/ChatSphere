@@ -4,32 +4,41 @@ import com.chatsphere.attachment.dto.AttachmentResponse;
 import com.chatsphere.attachment.entity.MessageAttachment;
 import com.chatsphere.attachment.repository.MessageAttachmentRepository;
 import com.chatsphere.attachment.service.AttachmentService;
+import com.chatsphere.common.dto.PageResponse;
+import com.chatsphere.common.dto.PaginationMeta;
 import com.chatsphere.common.enums.ConversationType;
+import com.chatsphere.common.enums.MemberRole;
 import com.chatsphere.common.enums.MessageType;
 import com.chatsphere.conversation.entity.Conversation;
 import com.chatsphere.conversation.entity.ConversationMember;
 import com.chatsphere.conversation.repository.ConversationMemberRepository;
 import com.chatsphere.conversation.repository.ConversationRepository;
+import com.chatsphere.exception.AppException;
 import com.chatsphere.exception.BadRequestException;
 import com.chatsphere.exception.ResourceNotFoundException;
-import com.chatsphere.message.dto.CursorApiResponse;
-import com.chatsphere.message.dto.MessageResponse;
-import com.chatsphere.message.dto.SendMessageRequest;
+import com.chatsphere.message.dto.*;
 import com.chatsphere.message.entity.Message;
+import com.chatsphere.message.entity.MessageDeletion;
+import com.chatsphere.message.entity.MessageReaction;
 import com.chatsphere.message.entity.MessageReceipt;
+import com.chatsphere.message.repository.MessageDeletionRepository;
+import com.chatsphere.message.repository.MessageReactionRepository;
 import com.chatsphere.message.repository.MessageReceiptRepository;
 import com.chatsphere.message.repository.MessageRepository;
 import com.chatsphere.user.entity.User;
 import com.chatsphere.user.repository.BlockedUserRepository;
 import com.chatsphere.user.repository.UserRepository;
 import com.chatsphere.websocket.dto.ReceiptNotification;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 
@@ -37,12 +46,13 @@ import java.util.*;
 @Transactional
 public class MessageService {
 
-    private static final int DEFAULT_PAGE_SIZE = 30;
-    private static final int MAX_PAGE_SIZE = 100;
-    private static final int MAX_PREVIEW_LENGTH = 250;
+    private static final int MAX_PREVIEW_LENGTH = 100;
+    private static final Duration DELETE_FOR_EVERYONE_LIMIT = Duration.ofHours(2);
 
     private final MessageRepository messageRepository;
     private final MessageReceiptRepository messageReceiptRepository;
+    private final MessageReactionRepository messageReactionRepository;
+    private final MessageDeletionRepository messageDeletionRepository;
     private final ConversationRepository conversationRepository;
     private final ConversationMemberRepository conversationMemberRepository;
     private final UserRepository userRepository;
@@ -54,6 +64,8 @@ public class MessageService {
     public MessageService(
             MessageRepository messageRepository,
             MessageReceiptRepository messageReceiptRepository,
+            MessageReactionRepository messageReactionRepository,
+            MessageDeletionRepository messageDeletionRepository,
             ConversationRepository conversationRepository,
             ConversationMemberRepository conversationMemberRepository,
             UserRepository userRepository,
@@ -64,6 +76,8 @@ public class MessageService {
     ) {
         this.messageRepository = messageRepository;
         this.messageReceiptRepository = messageReceiptRepository;
+        this.messageReactionRepository = messageReactionRepository;
+        this.messageDeletionRepository = messageDeletionRepository;
         this.conversationRepository = conversationRepository;
         this.conversationMemberRepository = conversationMemberRepository;
         this.userRepository = userRepository;
@@ -79,7 +93,6 @@ public class MessageService {
         Conversation conversation = conversationRepository.findByPublicId(request.conversationPublicId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", request.conversationPublicId()));
 
-        // Validate active membership
         ConversationMember senderMember = conversationMemberRepository.findByConversationIdAndUserId(conversation.getId(), sender.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", request.conversationPublicId()));
 
@@ -92,7 +105,6 @@ public class MessageService {
                 .filter(m -> m.getLeftAt() == null)
                 .toList();
 
-        // Validate block rules for private conversations
         if (conversation.getConversationType() == ConversationType.PRIVATE) {
             ConversationMember recipientMember = activeMembers.stream()
                     .filter(m -> !m.getUser().getId().equals(sender.getId()))
@@ -104,36 +116,37 @@ public class MessageService {
             }
         }
 
-        // Idempotency check: if message with this sender and clientMessageId already exists, return it
         Optional<Message> existing = messageRepository.findBySenderIdAndClientMessageId(sender.getId(), request.clientMessageId());
         if (existing.isPresent()) {
-            return mapToMessageResponse(existing.get());
+            return mapToMessageResponse(existing.get(), sender.getId());
         }
 
-        // Content or attachment validation
         boolean hasContent = request.content() != null && !request.content().trim().isEmpty();
         boolean hasAttachments = request.attachmentPublicIds() != null && !request.attachmentPublicIds().isEmpty();
         if (!hasContent && !hasAttachments) {
             throw new BadRequestException("Message must have either text content or an attachment");
         }
 
-        // Persist new message
+        Message replyTo = null;
+        if (request.replyToMessagePublicId() != null) {
+            replyTo = messageRepository.findByPublicId(request.replyToMessagePublicId()).orElse(null);
+        }
+
         Message message = new Message();
         message.setClientMessageId(request.clientMessageId());
         message.setConversation(conversation);
         message.setSender(sender);
         message.setMessageType(request.messageType() != null ? request.messageType() : (hasAttachments ? MessageType.IMAGE : MessageType.TEXT));
         message.setContent(hasContent ? request.content().trim() : "");
+        message.setReplyToMessage(replyTo);
         message.setCreatedAt(Instant.now());
 
         Message savedMessage = messageRepository.save(message);
 
-        // Link attachments
         if (hasAttachments) {
             attachmentService.linkAttachmentsToMessage(savedMessage, request.attachmentPublicIds());
         }
 
-        // Create receipt rows for each active recipient and increment unread counts
         for (ConversationMember member : activeMembers) {
             if (!member.getUser().getId().equals(sender.getId())) {
                 MessageReceipt receipt = new MessageReceipt();
@@ -146,7 +159,6 @@ public class MessageService {
             }
         }
 
-        // Update conversation last_message_at and preview
         conversation.setLastMessageAt(savedMessage.getCreatedAt());
         String preview = savedMessage.getContent();
         if (preview == null || preview.isEmpty()) {
@@ -157,7 +169,7 @@ public class MessageService {
         conversation.setLastMessagePreview(preview);
         conversationRepository.save(conversation);
 
-        return mapToMessageResponse(savedMessage);
+        return mapToMessageResponse(savedMessage, sender.getId());
     }
 
     public MessageResponse sendSystemMessage(Conversation conversation, String content) {
@@ -179,13 +191,11 @@ public class MessageService {
         conversation.setLastMessagePreview(preview);
         conversationRepository.save(conversation);
 
-        MessageResponse response = mapToMessageResponse(savedMessage);
-
+        MessageResponse response = mapToMessageResponse(savedMessage, null);
         messagingTemplate.convertAndSend(
-                "/topic/conversations/" + conversation.getPublicId(),
+                "/topic/conversation/" + conversation.getPublicId(),
                 response
         );
-
         return response;
     }
 
@@ -194,34 +204,34 @@ public class MessageService {
             String currentUsername,
             String conversationPublicId,
             int size,
-            String beforeCursor
+            String before
     ) {
-        User currentUser = getUserByUsername(currentUsername);
+        User user = getUserByUsername(currentUsername);
 
         Conversation conversation = conversationRepository.findByPublicId(conversationPublicId)
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
 
-        // Validate active membership
-        ConversationMember member = conversationMemberRepository.findByConversationIdAndUserId(conversation.getId(), currentUser.getId())
+        ConversationMember member = conversationMemberRepository.findByConversationIdAndUserId(conversation.getId(), user.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
 
         if (member.getLeftAt() != null) {
-            throw new AccessDeniedException("User is not an active member of this conversation");
+            throw new AccessDeniedException("User is no longer an active member of this conversation");
         }
 
-        int pageSize = size <= 0 ? DEFAULT_PAGE_SIZE : size;
-        if (pageSize > MAX_PAGE_SIZE) {
-            throw new BadRequestException("Maximum page size is " + MAX_PAGE_SIZE);
+        if (size > 100) {
+            throw new BadRequestException("Maximum page size is 100");
         }
-
-        // Fetch size + 1 to detect whether hasMore is true
+        int pageSize = Math.max(size, 1);
         PageRequest pageRequest = PageRequest.of(0, pageSize + 1);
+
+        Instant clearedAt = member.getClearedAt();
         List<Message> messages;
 
-        if (beforeCursor != null && !beforeCursor.isBlank()) {
-            CursorData cursorData = decodeCursor(beforeCursor);
+        if (before != null && !before.isBlank()) {
+            CursorData cursorData = decodeCursor(before);
             messages = new ArrayList<>(messageRepository.findMessagesBeforeCursor(
                     conversation.getId(),
+                    clearedAt,
                     cursorData.createdAt(),
                     cursorData.id(),
                     pageRequest
@@ -229,6 +239,7 @@ public class MessageService {
         } else {
             messages = new ArrayList<>(messageRepository.findNewestMessages(
                     conversation.getId(),
+                    clearedAt,
                     pageRequest
             ));
         }
@@ -242,17 +253,340 @@ public class MessageService {
             messages.remove(pageSize);
         }
 
-        // Return messages in chronological (ASC) display order
         Collections.reverse(messages);
 
+        // Filter out "deleted for me"
+        List<Long> messageIds = messages.stream().map(Message::getId).toList();
+        Set<Long> deletedMessageIds = new HashSet<>(
+                messageDeletionRepository.findAllByUserIdAndMessageIdIn(user.getId(), messageIds)
+                        .stream().map(d -> d.getMessage().getId()).toList()
+        );
+
         List<MessageResponse> dtos = messages.stream()
-                .map(this::mapToMessageResponse)
+                .filter(m -> !deletedMessageIds.contains(m.getId()))
+                .map(m -> mapToMessageResponse(m, user.getId()))
                 .toList();
 
         return CursorApiResponse.of(dtos, nextCursor, hasMore);
     }
 
+    public MessageResponse editMessage(String currentUsername, String messagePublicId, EditMessageRequest request) {
+        User user = getUserByUsername(currentUsername);
+        Message message = messageRepository.findByPublicId(messagePublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message", "publicId", messagePublicId));
+
+        if (!message.getSender().getId().equals(user.getId())) {
+            throw new AccessDeniedException("You can only edit your own messages");
+        }
+
+        if (message.isDeletedForEveryone()) {
+            throw new BadRequestException("Cannot edit a deleted message");
+        }
+
+        message.setContent(request.content().trim());
+        message.setEdited(true);
+        message.setUpdatedAt(Instant.now());
+        Message updated = messageRepository.save(message);
+
+        MessageResponse response = mapToMessageResponse(updated, user.getId());
+        messagingTemplate.convertAndSend(
+                "/topic/conversation/" + message.getConversation().getPublicId(),
+                Map.of("type", "MESSAGE_EDITED", "message", response)
+        );
+
+        return response;
+    }
+
+    public void deleteMessage(String currentUsername, String messagePublicId, boolean forEveryone) {
+        User user = getUserByUsername(currentUsername);
+        Message message = messageRepository.findByPublicId(messagePublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message", "publicId", messagePublicId));
+
+        Conversation conversation = message.getConversation();
+        ConversationMember member = conversationMemberRepository.findByConversationIdAndUserId(conversation.getId(), user.getId())
+                .orElseThrow(() -> new AccessDeniedException("Not a member of this conversation"));
+
+        if (forEveryone) {
+            boolean isSender = message.getSender().getId().equals(user.getId());
+            boolean isAdmin = member.getRole() == MemberRole.ADMIN && member.getLeftAt() == null;
+
+            if (!isSender && !isAdmin) {
+                throw new AccessDeniedException("Only the sender or a group admin can delete a message for everyone");
+            }
+
+            Duration age = Duration.between(message.getCreatedAt(), Instant.now());
+            if (age.compareTo(DELETE_FOR_EVERYONE_LIMIT) > 0) {
+                throw new BadRequestException("Messages can only be deleted for everyone within " + DELETE_FOR_EVERYONE_LIMIT.toHours() + " hours");
+            }
+
+            message.setDeletedForEveryone(true);
+            message.setContent("This message was deleted");
+            message.setUpdatedAt(Instant.now());
+            messageRepository.save(message);
+
+            messagingTemplate.convertAndSend(
+                    "/topic/conversation/" + conversation.getPublicId(),
+                    Map.of("type", "MESSAGE_DELETED", "messagePublicId", message.getPublicId(), "forEveryone", true)
+            );
+        } else {
+            // Delete for me
+            if (!messageDeletionRepository.existsByMessageIdAndUserId(message.getId(), user.getId())) {
+                MessageDeletion deletion = MessageDeletion.builder()
+                        .message(message)
+                        .user(user)
+                        .build();
+                messageDeletionRepository.save(deletion);
+            }
+        }
+    }
+
+    public MessageResponse forwardMessage(String currentUsername, String messagePublicId, ForwardMessageRequest request) {
+        User user = getUserByUsername(currentUsername);
+        Message sourceMessage = messageRepository.findByPublicId(messagePublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message", "publicId", messagePublicId));
+
+        // Validate sender is member of source conversation
+        conversationMemberRepository.findByConversationIdAndUserIdAndLeftAtIsNull(sourceMessage.getConversation().getId(), user.getId())
+                .orElseThrow(() -> new AccessDeniedException("Not permitted to forward from this conversation"));
+
+        // Validate membership in target conversation
+        Conversation targetConv = conversationRepository.findByPublicId(request.targetConversationPublicId())
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", request.targetConversationPublicId()));
+
+        ConversationMember targetMember = conversationMemberRepository.findByConversationIdAndUserIdAndLeftAtIsNull(targetConv.getId(), user.getId())
+                .orElseThrow(() -> new AccessDeniedException("You are not an active member of the target conversation"));
+
+        // Validate block rules for target if private
+        if (targetConv.getConversationType() == ConversationType.PRIVATE) {
+            List<ConversationMember> members = conversationMemberRepository.findAllByConversationId(targetConv.getId());
+            members.stream()
+                    .filter(m -> !m.getUser().getId().equals(user.getId()) && m.getLeftAt() == null)
+                    .findFirst()
+                    .ifPresent(other -> {
+                        if (blockedUserRepository.isBidirectionallyBlocked(user.getId(), other.getUser().getId())) {
+                            throw new BadRequestException("Cannot forward message: communication is blocked with recipient");
+                        }
+                    });
+        }
+
+        // Create forwarded message
+        String clientMsgId = "fwd-" + UUID.randomUUID();
+        Message forwarded = new Message();
+        forwarded.setClientMessageId(clientMsgId);
+        forwarded.setConversation(targetConv);
+        forwarded.setSender(user);
+        forwarded.setMessageType(sourceMessage.getMessageType());
+        forwarded.setContent(sourceMessage.getContent());
+        forwarded.setForwardedFromMessageId(sourceMessage.getId());
+        forwarded.setCreatedAt(Instant.now());
+
+        Message saved = messageRepository.save(forwarded);
+
+        // Copy attachments to new message if any
+        List<MessageAttachment> sourceAttachments = messageAttachmentRepository.findAllByMessageId(sourceMessage.getId());
+        for (MessageAttachment att : sourceAttachments) {
+            MessageAttachment copy = MessageAttachment.builder()
+                    .publicId(UUID.randomUUID().toString())
+                    .message(saved)
+                    .storagePublicId(att.getStoragePublicId())
+                    .fileName(att.getFileName())
+                    .fileType(att.getFileType())
+                    .mimeType(att.getMimeType())
+                    .fileSize(att.getFileSize())
+                    .storageUrl(att.getStorageUrl())
+                    .thumbnailUrl(att.getThumbnailUrl())
+                    .build();
+            messageAttachmentRepository.save(copy);
+        }
+
+        // Target member unread counts & receipts
+        List<ConversationMember> activeMembers = conversationMemberRepository.findAllByConversationId(targetConv.getId()).stream()
+                .filter(m -> m.getLeftAt() == null)
+                .toList();
+
+        for (ConversationMember m : activeMembers) {
+            if (!m.getUser().getId().equals(user.getId())) {
+                MessageReceipt receipt = new MessageReceipt();
+                receipt.setMessage(saved);
+                receipt.setRecipient(m.getUser());
+                messageReceiptRepository.save(receipt);
+
+                m.setUnreadCount(m.getUnreadCount() + 1);
+                conversationMemberRepository.save(m);
+            }
+        }
+
+        targetConv.setLastMessageAt(saved.getCreatedAt());
+        targetConv.setLastMessagePreview(saved.getContent());
+        conversationRepository.save(targetConv);
+
+        MessageResponse response = mapToMessageResponse(saved, user.getId());
+        messagingTemplate.convertAndSend(
+                "/topic/conversation/" + targetConv.getPublicId(),
+                response
+        );
+
+        return response;
+    }
+
+    public MessageResponse addReaction(String currentUsername, String messagePublicId, ReactionRequest request) {
+        User user = getUserByUsername(currentUsername);
+        Message message = messageRepository.findByPublicId(messagePublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message", "publicId", messagePublicId));
+
+        conversationMemberRepository.findByConversationIdAndUserIdAndLeftAtIsNull(message.getConversation().getId(), user.getId())
+                .orElseThrow(() -> new AccessDeniedException("Not a member of this conversation"));
+
+        Optional<MessageReaction> existing = messageReactionRepository.findByMessageIdAndUserId(message.getId(), user.getId());
+        if (existing.isPresent()) {
+            MessageReaction r = existing.get();
+            r.setEmoji(request.emoji());
+            messageReactionRepository.save(r);
+        } else {
+            MessageReaction reaction = MessageReaction.builder()
+                    .message(message)
+                    .user(user)
+                    .emoji(request.emoji())
+                    .build();
+            messageReactionRepository.save(reaction);
+        }
+
+        MessageResponse response = mapToMessageResponse(message, user.getId());
+        messagingTemplate.convertAndSend(
+                "/topic/conversation/" + message.getConversation().getPublicId(),
+                Map.of("type", "MESSAGE_REACTION", "message", response)
+        );
+
+        return response;
+    }
+
+    public MessageResponse removeReaction(String currentUsername, String messagePublicId) {
+        User user = getUserByUsername(currentUsername);
+        Message message = messageRepository.findByPublicId(messagePublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message", "publicId", messagePublicId));
+
+        conversationMemberRepository.findByConversationIdAndUserIdAndLeftAtIsNull(message.getConversation().getId(), user.getId())
+                .orElseThrow(() -> new AccessDeniedException("Not a member of this conversation"));
+
+        messageReactionRepository.deleteByMessageIdAndUserId(message.getId(), user.getId());
+
+        MessageResponse response = mapToMessageResponse(message, user.getId());
+        messagingTemplate.convertAndSend(
+                "/topic/conversation/" + message.getConversation().getPublicId(),
+                Map.of("type", "MESSAGE_REACTION", "message", response)
+        );
+
+        return response;
+    }
+
+    public MessageResponse pinMessage(String currentUsername, String messagePublicId, boolean pin) {
+        User user = getUserByUsername(currentUsername);
+        Message message = messageRepository.findByPublicId(messagePublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message", "publicId", messagePublicId));
+
+        conversationMemberRepository.findByConversationIdAndUserIdAndLeftAtIsNull(message.getConversation().getId(), user.getId())
+                .orElseThrow(() -> new AccessDeniedException("Not a member of this conversation"));
+
+        message.setPinned(pin);
+        message.setPinnedAt(pin ? Instant.now() : null);
+        message.setPinnedBy(pin ? user : null);
+        Message saved = messageRepository.save(message);
+
+        MessageResponse response = mapToMessageResponse(saved, user.getId());
+        messagingTemplate.convertAndSend(
+                "/topic/conversation/" + message.getConversation().getPublicId(),
+                Map.of("type", "MESSAGE_PINNED", "message", response)
+        );
+
+        return response;
+    }
+
+    @Transactional(readOnly = true)
+    public List<MessageResponse> getPinnedMessages(String currentUsername, String conversationPublicId) {
+        User user = getUserByUsername(currentUsername);
+        Conversation conversation = conversationRepository.findByPublicId(conversationPublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
+
+        conversationMemberRepository.findByConversationIdAndUserIdAndLeftAtIsNull(conversation.getId(), user.getId())
+                .orElseThrow(() -> new AccessDeniedException("Not a member of this conversation"));
+
+        List<Message> pinned = messageRepository.findPinnedMessages(conversation.getId());
+        return pinned.stream().map(m -> mapToMessageResponse(m, user.getId())).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<MessageResponse> searchMessages(
+            String currentUsername,
+            String conversationPublicId,
+            String query,
+            Instant startDate,
+            Instant endDate,
+            Pageable pageable
+    ) {
+        User user = getUserByUsername(currentUsername);
+
+        List<Long> accessibleConversationIds;
+        if (conversationPublicId != null && !conversationPublicId.isBlank()) {
+            Conversation conv = conversationRepository.findByPublicId(conversationPublicId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
+
+            conversationMemberRepository.findByConversationIdAndUserIdAndLeftAtIsNull(conv.getId(), user.getId())
+                    .orElseThrow(() -> new AccessDeniedException("Not a member of this conversation"));
+            accessibleConversationIds = List.of(conv.getId());
+        } else {
+            accessibleConversationIds = conversationMemberRepository.findAllByUserId(user.getId()).stream()
+                    .filter(m -> m.getLeftAt() == null)
+                    .map(m -> m.getConversation().getId())
+                    .toList();
+        }
+
+        if (accessibleConversationIds.isEmpty()) {
+            return PageResponse.of(List.of(), new PaginationMeta(0, pageable.getPageSize(), 0, 0, false, false));
+        }
+
+        Page<Message> searchPage = messageRepository.searchMessages(
+                accessibleConversationIds,
+                query.trim(),
+                startDate,
+                endDate,
+                pageable
+        );
+
+        List<MessageResponse> dtos = searchPage.getContent().stream()
+                .map(m -> mapToMessageResponse(m, user.getId()))
+                .toList();
+
+        return PageResponse.of(
+                dtos,
+                new PaginationMeta(
+                        searchPage.getNumber(),
+                        searchPage.getSize(),
+                        searchPage.getTotalElements(),
+                        searchPage.getTotalPages(),
+                        searchPage.hasNext(),
+                        searchPage.hasPrevious()
+                )
+        );
+    }
+
+    public void deleteConversationForMe(String currentUsername, String conversationPublicId) {
+        User user = getUserByUsername(currentUsername);
+        Conversation conversation = conversationRepository.findByPublicId(conversationPublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
+
+        ConversationMember member = conversationMemberRepository.findByConversationIdAndUserId(conversation.getId(), user.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
+
+        member.setClearedAt(Instant.now());
+        member.setUnreadCount(0);
+        conversationMemberRepository.save(member);
+    }
+
     public MessageResponse mapToMessageResponse(Message message) {
+        return mapToMessageResponse(message, null);
+    }
+
+    public MessageResponse mapToMessageResponse(Message message, Long currentUserId) {
         List<AttachmentResponse> attachments = List.of();
         if (message.getId() != null) {
             List<MessageAttachment> attEntities = messageAttachmentRepository.findAllByMessageId(message.getId());
@@ -261,6 +595,31 @@ public class MessageService {
                         .map(attachmentService::toResponse)
                         .toList();
             }
+        }
+
+        ReplySnippet replySnippet = null;
+        if (message.getReplyToMessage() != null) {
+            Message r = message.getReplyToMessage();
+            replySnippet = new ReplySnippet(
+                    r.getPublicId(),
+                    r.getSender().getPublicId(),
+                    r.getSender().getUsername(),
+                    r.getSender().getFullName(),
+                    r.isDeletedForEveryone() ? "This message was deleted" : r.getContent(),
+                    r.getMessageType().name()
+            );
+        }
+
+        List<ReactionResponse> reactions = List.of();
+        if (message.getId() != null) {
+            reactions = messageReactionRepository.findAllByMessageId(message.getId()).stream()
+                    .map(r -> new ReactionResponse(
+                            r.getEmoji(),
+                            r.getUser().getPublicId(),
+                            r.getUser().getUsername(),
+                            r.getCreatedAt()
+                    ))
+                    .toList();
         }
 
         return new MessageResponse(
@@ -276,7 +635,13 @@ public class MessageService {
                 message.getUpdatedAt(),
                 message.isEdited(),
                 message.isDeletedForEveryone(),
-                attachments
+                attachments,
+                replySnippet,
+                message.getForwardedFromMessageId() != null,
+                message.isPinned(),
+                message.getPinnedAt(),
+                message.getPinnedBy() != null ? message.getPinnedBy().getUsername() : null,
+                reactions
         );
     }
 
@@ -296,7 +661,7 @@ public class MessageService {
             Long id = Long.parseLong(raw.substring(colonIdx + 1));
             return new CursorData(createdAt, id);
         } catch (Exception e) {
-            throw new BadRequestException("Invalid cursor: " + cursor);
+            throw new BadRequestException("Invalid cursor format");
         }
     }
 
@@ -304,7 +669,6 @@ public class MessageService {
 
     public ReceiptNotification markMessageDelivered(String currentUsername, String messagePublicId) {
         User recipient = getUserByUsername(currentUsername);
-
         MessageReceipt receipt = messageReceiptRepository.findByMessagePublicIdAndRecipientId(messagePublicId, recipient.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("MessageReceipt", "messagePublicId", messagePublicId));
 
@@ -323,8 +687,40 @@ public class MessageService {
     }
 
     public List<ReceiptNotification> markConversationRead(String currentUsername, String conversationPublicId) {
-        User recipient = getUserByUsername(currentUsername);
+        return markMessagesRead(currentUsername, conversationPublicId);
+    }
 
+    public List<ReceiptNotification> markMessagesDelivered(String recipientUsername, String conversationPublicId) {
+        User recipient = getUserByUsername(recipientUsername);
+        Conversation conversation = conversationRepository.findByPublicId(conversationPublicId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
+
+        List<MessageReceipt> undeliveredReceipts = messageReceiptRepository.findUndeliveredReceiptsForConversation(
+                conversation.getId(),
+                recipient.getId()
+        );
+
+        Instant now = Instant.now();
+        List<ReceiptNotification> notifications = new ArrayList<>();
+
+        for (MessageReceipt receipt : undeliveredReceipts) {
+            receipt.setDeliveredAt(now);
+            messageReceiptRepository.save(receipt);
+
+            notifications.add(new ReceiptNotification(
+                    receipt.getMessage().getPublicId(),
+                    conversation.getPublicId(),
+                    recipient.getPublicId(),
+                    "DELIVERED",
+                    now
+            ));
+        }
+
+        return notifications;
+    }
+
+    public List<ReceiptNotification> markMessagesRead(String recipientUsername, String conversationPublicId) {
+        User recipient = getUserByUsername(recipientUsername);
         Conversation conversation = conversationRepository.findByPublicId(conversationPublicId)
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "publicId", conversationPublicId));
 

@@ -65,6 +65,12 @@ class MessageServiceTest {
     private org.springframework.messaging.simp.SimpMessagingTemplate messagingTemplate;
 
     @Mock
+    private com.chatsphere.message.repository.MessageReactionRepository messageReactionRepository;
+
+    @Mock
+    private com.chatsphere.message.repository.MessageDeletionRepository messageDeletionRepository;
+
+    @Mock
     private com.chatsphere.attachment.service.AttachmentService attachmentService;
 
     @Mock
@@ -83,6 +89,8 @@ class MessageServiceTest {
         messageService = new MessageService(
                 messageRepository,
                 messageReceiptRepository,
+                messageReactionRepository,
+                messageDeletionRepository,
                 conversationRepository,
                 conversationMemberRepository,
                 userRepository,
@@ -262,7 +270,7 @@ class MessageServiceTest {
         Message m2 = createMessage(11L, "Second", sameTimestamp);
         Message m3 = createMessage(12L, "Third", sameTimestamp);
 
-        given(messageRepository.findNewestMessages(eq(10L), any()))
+        given(messageRepository.findNewestMessages(eq(10L), any(), any()))
                 .willReturn(new ArrayList<>(List.of(m3, m2, m1)));
 
         CursorApiResponse<MessageResponse> response = messageService.getMessages(
