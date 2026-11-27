@@ -16,7 +16,7 @@
 | **Phase 7** | Attachments (Cloudinary Storage, Media Previews) | Completed |
 | **Phase 8** | Message Management (Reactions, Replies, Edits, Deletions) | Completed |
 | **Phase 9** | Caching and Performance (Redis, Query Optimization) | Completed |
-| **Phase 10** | Notifications and Events (Kafka, In-App Notifications) | Pending |
+| **Phase 10** | Notifications and Events (In-App Notifications, Read Receipts, STOMP Push) | Completed |
 | **Phase 11** | End-to-End Encryption (Client-side Cryptography) | Pending |
 | **Phase 12** | Final Testing and Deployment (Dockerization, Production Tuning) | Pending |
 
@@ -515,3 +515,42 @@
   - **Backend Test Suite**: **88 passing tests** (including dedicated `RedisCacheServiceTest` and `PresenceServiceTest` verifying cache hit, cache miss, cache eviction, and Redis-down fallback).
   - **Frontend Test Suite**: **13 test suites, 38 passing tests** in Vitest.
   - **Frontend Production Build**: `npm run build` completed successfully.
+
+---
+
+## Phase 10 Progress Details (In-App Notifications)
+
+### Completed Features
+- **Database Schema**:
+  - `V10__notifications_schema.sql`:
+    - `notifications` table (`id`, `public_id`, `user_id`, `notification_type`, `title`, `message`, `reference_id`, `is_read`, `created_at`).
+    - Composite indexes: `idx_notifications_user_created (user_id, created_at)`, `idx_notifications_user_read (user_id, is_read)`, and `idx_notifications_dedup (user_id, notification_type, reference_id)`.
+- **Backend Architecture & Triggers**:
+  - `NotificationType.java`: `NEW_MESSAGE`, `GROUP_INVITE`, `MEMBER_ADDED`, `MEMBER_REMOVED`, `MENTION`.
+  - `NotificationRepository.java`: Custom queries for pagination, read filtering, unread counting (`countByUserIdAndIsReadFalse`), bulk read updates (`markAllAsReadByUserId`), and deduplication (`existsByUserIdAndNotificationTypeAndReferenceIdAndIsReadFalse`).
+  - `NotificationService.java`:
+    - Deduplication: suppresses duplicate unread notifications for identical recipient, type, and reference ID.
+    - Real-time STOMP delivery: pushes `NotificationResponse` to `/user/{username}/queue/notifications`.
+    - Paginated listing with read/unread filter and `ALLOWED_SORTS` safety.
+    - Mark single and mark all notifications as read.
+  - **Triggers**:
+    - `MessageService.java`: creates `NEW_MESSAGE` notifications when a recipient is offline or has unread messages in the conversation; parses `@username` mentions to create high-priority `MENTION` notifications.
+    - `GroupService.java`: creates `GROUP_INVITE` and `MEMBER_ADDED` notifications when a user is added to a group; creates `MEMBER_REMOVED` notifications when removed.
+- **REST API Endpoints (`NotificationController.java`)**:
+  - `GET /api/notifications`: Paginated notifications with optional `read` boolean filter.
+  - `GET /api/notifications/unread-count`: Unread notifications count badge query.
+  - `PUT /api/notifications/{publicId}/read`: Marks single notification as read.
+  - `PUT /api/notifications/read-all`: Marks all user notifications as read.
+- **Frontend Architecture & UI**:
+  - `notificationService.js`: API methods for fetching paginated notifications, unread count, and marking notifications as read.
+  - `useNotifications.js`: Custom hook managing notification list state, unread counter badge, filter tabs, and real-time STOMP subscription on `/user/queue/notifications`.
+  - `NotificationDropdown.jsx`:
+    - Notification bell button with unread counter pill in `Navbar.jsx`.
+    - Dropdown panel with "All" and "Unread" filter pills.
+    - Category-based icons (chat bubble for messages, people for groups, at-symbol for mentions).
+    - Relative timestamps ("Just now", "5m ago", "2h ago").
+    - "Mark all as read" button and click-to-read interaction.
+- **Verification & Testing**:
+  - **Backend Test Suite**: **93 passing tests, 0 failures, 0 errors** (`mvnw test`), including `NotificationServiceTest` (verifying creation, deduplication, unread count, mark as read, mark all as read).
+  - **Frontend Test Suite**: **14 test suites, 42 passing tests, 0 failures** (`vitest run`), including `NotificationDropdown.test.jsx`.
+  - **Frontend Production Build**: `npm run build` compiled cleanly into `dist/`.

@@ -51,6 +51,9 @@ class GroupServiceTest {
     @Mock
     private MessageService messageService;
 
+    @Mock
+    private com.chatsphere.notification.service.NotificationService notificationService;
+
     private GroupService groupService;
 
     private User adminUser;
@@ -68,7 +71,8 @@ class GroupServiceTest {
                 conversationMemberRepository,
                 groupDetailRepository,
                 userRepository,
-                messageService
+                messageService,
+                notificationService
         );
 
         adminUser = new User();

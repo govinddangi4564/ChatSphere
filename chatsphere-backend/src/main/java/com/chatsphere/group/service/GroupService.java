@@ -31,19 +31,22 @@ public class GroupService {
     private final GroupDetailRepository groupDetailRepository;
     private final UserRepository userRepository;
     private final MessageService messageService;
+    private final com.chatsphere.notification.service.NotificationService notificationService;
 
     public GroupService(
             ConversationRepository conversationRepository,
             ConversationMemberRepository conversationMemberRepository,
             GroupDetailRepository groupDetailRepository,
             UserRepository userRepository,
-            MessageService messageService
+            MessageService messageService,
+            com.chatsphere.notification.service.NotificationService notificationService
     ) {
         this.conversationRepository = conversationRepository;
         this.conversationMemberRepository = conversationMemberRepository;
         this.groupDetailRepository = groupDetailRepository;
         this.userRepository = userRepository;
         this.messageService = messageService;
+        this.notificationService = notificationService;
     }
 
     public GroupDetailsResponse createGroup(String currentUsername, CreateGroupRequest request) {
@@ -83,6 +86,15 @@ public class GroupService {
                 member.setUser(memberUser);
                 member.setRole(MemberRole.MEMBER);
                 conversationMemberRepository.save(member);
+
+                // Notify invited member
+                notificationService.createNotification(
+                        memberUser,
+                        com.chatsphere.common.enums.NotificationType.GROUP_INVITE,
+                        "Group Invitation",
+                        creator.getFullName() + " added you to the group \"" + savedConversation.getTitle() + "\"",
+                        savedConversation.getPublicId()
+                );
             }
         }
 
@@ -194,6 +206,15 @@ public class GroupService {
 
             String systemContent = adminMember.getUser().getFullName() + " added " + targetUser.getFullName();
             messageService.sendSystemMessage(conversation, systemContent);
+
+            // Phase 10: Trigger MEMBER_ADDED notification to target user
+            notificationService.createNotification(
+                    targetUser,
+                    com.chatsphere.common.enums.NotificationType.MEMBER_ADDED,
+                    "Added to " + conversation.getTitle(),
+                    adminMember.getUser().getFullName() + " added you to the group \"" + conversation.getTitle() + "\"",
+                    conversation.getPublicId()
+            );
         }
 
         return getGroupDetails(currentUsername, groupPublicId);
@@ -217,6 +238,15 @@ public class GroupService {
 
         String systemContent = adminMember.getUser().getFullName() + " removed " + targetUser.getFullName();
         messageService.sendSystemMessage(conversation, systemContent);
+
+        // Phase 10: Trigger MEMBER_REMOVED notification to target user
+        notificationService.createNotification(
+                targetUser,
+                com.chatsphere.common.enums.NotificationType.MEMBER_REMOVED,
+                "Removed from " + conversation.getTitle(),
+                adminMember.getUser().getFullName() + " removed you from the group \"" + conversation.getTitle() + "\"",
+                conversation.getPublicId()
+        );
     }
 
     public void leaveGroup(String currentUsername, String groupPublicId) {

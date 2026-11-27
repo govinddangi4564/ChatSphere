@@ -61,6 +61,8 @@ public class MessageService {
     private final AttachmentService attachmentService;
     private final MessageAttachmentRepository messageAttachmentRepository;
     private final com.chatsphere.cache.service.RedisCacheService redisCacheService;
+    private final com.chatsphere.notification.service.NotificationService notificationService;
+    private final com.chatsphere.websocket.service.PresenceService presenceService;
 
     public MessageService(
             MessageRepository messageRepository,
@@ -74,7 +76,9 @@ public class MessageService {
             SimpMessagingTemplate messagingTemplate,
             AttachmentService attachmentService,
             MessageAttachmentRepository messageAttachmentRepository,
-            com.chatsphere.cache.service.RedisCacheService redisCacheService
+            com.chatsphere.cache.service.RedisCacheService redisCacheService,
+            com.chatsphere.notification.service.NotificationService notificationService,
+            com.chatsphere.websocket.service.PresenceService presenceService
     ) {
         this.messageRepository = messageRepository;
         this.messageReceiptRepository = messageReceiptRepository;
@@ -88,6 +92,8 @@ public class MessageService {
         this.attachmentService = attachmentService;
         this.messageAttachmentRepository = messageAttachmentRepository;
         this.redisCacheService = redisCacheService;
+        this.notificationService = notificationService;
+        this.presenceService = presenceService;
     }
 
     public MessageResponse sendMessage(String currentUsername, SendMessageRequest request) {
@@ -159,6 +165,34 @@ public class MessageService {
 
                 member.setUnreadCount(member.getUnreadCount() + 1);
                 conversationMemberRepository.save(member);
+
+                // Phase 10: Trigger in-app notification if recipient is offline or chat is unread
+                boolean isOnline = presenceService.isUserOnline(member.getUser().getUsername());
+                String notifTitle = sender.getFullName();
+                if (conversation.getConversationType() == ConversationType.GROUP && conversation.getTitle() != null) {
+                    notifTitle = conversation.getTitle();
+                }
+                String notifBody = sender.getFullName() + ": " + (savedMessage.getContent().isEmpty() ? "[" + savedMessage.getMessageType() + "]" : savedMessage.getContent());
+
+                // Check for @mention in content
+                boolean isMentioned = hasMention(savedMessage.getContent(), member.getUser().getUsername());
+                if (isMentioned) {
+                    notificationService.createNotification(
+                            member.getUser(),
+                            com.chatsphere.common.enums.NotificationType.MENTION,
+                            "Mentioned by " + sender.getFullName(),
+                            notifBody,
+                            conversation.getPublicId()
+                    );
+                } else if (!isOnline || member.getUnreadCount() > 0) {
+                    notificationService.createNotification(
+                            member.getUser(),
+                            com.chatsphere.common.enums.NotificationType.NEW_MESSAGE,
+                            notifTitle,
+                            notifBody,
+                            conversation.getPublicId()
+                    );
+                }
             }
         }
 
@@ -775,5 +809,14 @@ public class MessageService {
     private User getUserByUsername(String username) {
         return userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "username", username));
+    }
+
+    private boolean hasMention(String content, String username) {
+        if (content == null || username == null || content.isEmpty()) {
+            return false;
+        }
+        return java.util.regex.Pattern.compile("(?i)@" + java.util.regex.Pattern.quote(username) + "\\b")
+                .matcher(content)
+                .find();
     }
 }

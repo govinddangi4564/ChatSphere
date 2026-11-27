@@ -77,6 +77,12 @@ class MessageManagementTest {
     @Mock
     private com.chatsphere.cache.service.RedisCacheService redisCacheService;
 
+    @Mock
+    private com.chatsphere.notification.service.NotificationService notificationService;
+
+    @Mock
+    private com.chatsphere.websocket.service.PresenceService presenceService;
+
     private MessageService messageService;
 
     private User alice;
@@ -98,7 +104,9 @@ class MessageManagementTest {
                 messagingTemplate,
                 attachmentService,
                 messageAttachmentRepository,
-                redisCacheService
+                redisCacheService,
+                notificationService,
+                presenceService
         );
 
         alice = new User();

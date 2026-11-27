@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+import NotificationDropdown from '../notification/NotificationDropdown';
 
 export default function Navbar() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -24,6 +25,8 @@ export default function Navbar() {
 
         {isAuthenticated && (
           <div className="d-flex align-items-center gap-2 order-lg-last">
+            <NotificationDropdown />
+
             <Link
               to="/profile"
               className="d-flex align-items-center gap-2 text-decoration-none text-white me-2"
