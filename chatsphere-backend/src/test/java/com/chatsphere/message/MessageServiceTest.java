@@ -76,6 +76,9 @@ class MessageServiceTest {
     @Mock
     private com.chatsphere.attachment.repository.MessageAttachmentRepository messageAttachmentRepository;
 
+    @Mock
+    private com.chatsphere.cache.service.RedisCacheService redisCacheService;
+
     private MessageService messageService;
 
     private User sender;
@@ -97,7 +100,8 @@ class MessageServiceTest {
                 blockedUserRepository,
                 messagingTemplate,
                 attachmentService,
-                messageAttachmentRepository
+                messageAttachmentRepository,
+                redisCacheService
         );
 
         sender = new User();

@@ -40,6 +40,7 @@ public class ConversationService {
     private final BlockedUserRepository blockedUserRepository;
     private final UserContactRepository userContactRepository;
     private final UserPrivacySettingRepository privacySettingRepository;
+    private final com.chatsphere.cache.service.RedisCacheService redisCacheService;
 
     public ConversationService(
             ConversationRepository conversationRepository,
@@ -47,7 +48,8 @@ public class ConversationService {
             UserRepository userRepository,
             BlockedUserRepository blockedUserRepository,
             UserContactRepository userContactRepository,
-            UserPrivacySettingRepository privacySettingRepository
+            UserPrivacySettingRepository privacySettingRepository,
+            com.chatsphere.cache.service.RedisCacheService redisCacheService
     ) {
         this.conversationRepository = conversationRepository;
         this.conversationMemberRepository = conversationMemberRepository;
@@ -55,6 +57,7 @@ public class ConversationService {
         this.blockedUserRepository = blockedUserRepository;
         this.userContactRepository = userContactRepository;
         this.privacySettingRepository = privacySettingRepository;
+        this.redisCacheService = redisCacheService;
     }
 
     public ConversationDetailsResponse createOrFindPrivateConversation(String currentUsername, CreatePrivateConversationRequest request) {
@@ -180,6 +183,16 @@ public class ConversationService {
 
     @Transactional(readOnly = true)
     public ConversationDetailsResponse getConversationDetails(String currentUsername, String publicId) {
+        String cacheKey = "conv:metadata:" + publicId + ":user:" + currentUsername;
+        return redisCacheService.getOrCompute(
+                cacheKey,
+                java.time.Duration.ofMinutes(2),
+                ConversationDetailsResponse.class,
+                () -> fetchConversationDetailsFromDb(currentUsername, publicId)
+        );
+    }
+
+    private ConversationDetailsResponse fetchConversationDetailsFromDb(String currentUsername, String publicId) {
         User currentUser = getUserByUsername(currentUsername);
 
         ConversationMember membership = conversationMemberRepository.findByConversationPublicIdAndUserId(publicId, currentUser.getId())
@@ -239,6 +252,7 @@ public class ConversationService {
 
         membership.setArchived(archived);
         conversationMemberRepository.save(membership);
+        redisCacheService.evictByPattern("conv:metadata:" + publicId + ":*");
     }
 
     public void muteConversation(String currentUsername, String publicId, boolean muted) {
@@ -252,6 +266,7 @@ public class ConversationService {
 
         membership.setMuted(muted);
         conversationMemberRepository.save(membership);
+        redisCacheService.evictByPattern("conv:metadata:" + publicId + ":*");
     }
 
     private ConversationParticipantResponse buildParticipantDto(Long currentUserId, User targetUser, String role) {

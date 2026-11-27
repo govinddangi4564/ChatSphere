@@ -57,6 +57,9 @@ class ConversationServiceTest {
     @Mock
     private UserPrivacySettingRepository privacySettingRepository;
 
+    @Mock
+    private com.chatsphere.cache.service.RedisCacheService redisCacheService;
+
     private ConversationService conversationService;
 
     private User user1;
@@ -71,8 +74,15 @@ class ConversationServiceTest {
                 userRepository,
                 blockedUserRepository,
                 userContactRepository,
-                privacySettingRepository
+                privacySettingRepository,
+                redisCacheService
         );
+
+        lenient().when(redisCacheService.getOrCompute(any(), any(), any(), any()))
+                .thenAnswer(inv -> {
+                    java.util.function.Supplier<?> supplier = inv.getArgument(3);
+                    return supplier != null ? supplier.get() : null;
+                });
 
         user1 = new User();
         user1.setId(1L);

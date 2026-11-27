@@ -60,6 +60,7 @@ public class MessageService {
     private final SimpMessagingTemplate messagingTemplate;
     private final AttachmentService attachmentService;
     private final MessageAttachmentRepository messageAttachmentRepository;
+    private final com.chatsphere.cache.service.RedisCacheService redisCacheService;
 
     public MessageService(
             MessageRepository messageRepository,
@@ -72,7 +73,8 @@ public class MessageService {
             BlockedUserRepository blockedUserRepository,
             SimpMessagingTemplate messagingTemplate,
             AttachmentService attachmentService,
-            MessageAttachmentRepository messageAttachmentRepository
+            MessageAttachmentRepository messageAttachmentRepository,
+            com.chatsphere.cache.service.RedisCacheService redisCacheService
     ) {
         this.messageRepository = messageRepository;
         this.messageReceiptRepository = messageReceiptRepository;
@@ -85,6 +87,7 @@ public class MessageService {
         this.messagingTemplate = messagingTemplate;
         this.attachmentService = attachmentService;
         this.messageAttachmentRepository = messageAttachmentRepository;
+        this.redisCacheService = redisCacheService;
     }
 
     public MessageResponse sendMessage(String currentUsername, SendMessageRequest request) {
@@ -168,6 +171,9 @@ public class MessageService {
         }
         conversation.setLastMessagePreview(preview);
         conversationRepository.save(conversation);
+
+        // Evict conversation metadata & unread counts in Redis
+        redisCacheService.evictByPattern("conv:metadata:" + conversation.getPublicId() + ":*");
 
         return mapToMessageResponse(savedMessage, sender.getId());
     }
@@ -580,6 +586,7 @@ public class MessageService {
         member.setClearedAt(Instant.now());
         member.setUnreadCount(0);
         conversationMemberRepository.save(member);
+        redisCacheService.evictByPattern("conv:metadata:" + conversation.getPublicId() + ":*");
     }
 
     public MessageResponse mapToMessageResponse(Message message) {
@@ -729,6 +736,7 @@ public class MessageService {
 
         member.setUnreadCount(0);
         conversationMemberRepository.save(member);
+        redisCacheService.evictByPattern("conv:metadata:" + conversation.getPublicId() + ":*");
 
         List<MessageReceipt> unreadReceipts = messageReceiptRepository.findUnreadReceiptsForConversation(
                 conversation.getId(),

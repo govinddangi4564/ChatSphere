@@ -35,40 +35,49 @@ public class UserService {
     private final BlockedUserRepository blockedUserRepository;
     private final UserContactRepository userContactRepository;
     private final UserPrivacySettingRepository privacySettingRepository;
+    private final com.chatsphere.cache.service.RedisCacheService redisCacheService;
 
     public UserService(
             UserRepository userRepository,
             BlockedUserRepository blockedUserRepository,
             UserContactRepository userContactRepository,
-            UserPrivacySettingRepository privacySettingRepository
+            UserPrivacySettingRepository privacySettingRepository,
+            com.chatsphere.cache.service.RedisCacheService redisCacheService
     ) {
         this.userRepository = userRepository;
         this.blockedUserRepository = blockedUserRepository;
         this.userContactRepository = userContactRepository;
         this.privacySettingRepository = privacySettingRepository;
+        this.redisCacheService = redisCacheService;
     }
 
     @Transactional(readOnly = true)
     public UserResponse getMe(String username) {
-        User user = getUserByUsername(username);
-        return UserMapper.toUserResponse(user);
+        String key = "user:profile:username:" + username;
+        return redisCacheService.getOrCompute(
+                key,
+                java.time.Duration.ofMinutes(10),
+                UserResponse.class,
+                () -> UserMapper.toUserResponse(getUserByUsername(username))
+        );
     }
 
     public UserResponse updateProfile(String username, UpdateProfileRequest request) {
         User user = getUserByUsername(username);
         user.setFullName(request.fullName().trim());
-
         if (request.bio() != null) {
             user.setBio(request.bio().trim());
         }
-
-        // Profile image URL field: accepts URL string. Note: Real cloud storage upload arrives in Phase 7.
         if (request.profileImageUrl() != null) {
             user.setProfileImageUrl(request.profileImageUrl().trim());
         }
+        User saved = userRepository.save(user);
 
-        User updatedUser = userRepository.save(user);
-        return UserMapper.toUserResponse(updatedUser);
+        // Invalidate profile cache
+        redisCacheService.evict("user:profile:username:" + username);
+        redisCacheService.evict("user:profile:publicId:" + user.getPublicId());
+
+        return UserMapper.toUserResponse(saved);
     }
 
     @Transactional(readOnly = true)

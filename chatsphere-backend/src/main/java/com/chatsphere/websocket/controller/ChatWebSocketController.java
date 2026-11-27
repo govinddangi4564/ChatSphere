@@ -30,15 +30,18 @@ public class ChatWebSocketController {
     private final MessageService messageService;
     private final SimpMessagingTemplate messagingTemplate;
     private final UserRepository userRepository;
+    private final com.chatsphere.websocket.service.PresenceService presenceService;
 
     public ChatWebSocketController(
             MessageService messageService,
             SimpMessagingTemplate messagingTemplate,
-            UserRepository userRepository
+            UserRepository userRepository,
+            com.chatsphere.websocket.service.PresenceService presenceService
     ) {
         this.messageService = messageService;
         this.messagingTemplate = messagingTemplate;
         this.userRepository = userRepository;
+        this.presenceService = presenceService;
     }
 
     @MessageMapping("/chat.send")
@@ -58,6 +61,8 @@ public class ChatWebSocketController {
     public void handleTyping(@Valid @Payload TypingEventRequest request, Principal principal) {
         log.debug("STOMP /chat.typing from principal: {}", principal.getName());
         User user = getUserByUsername(principal.getName());
+
+        presenceService.setTyping(request.conversationPublicId(), user.getUsername(), request.typing());
 
         TypingEventResponse response = new TypingEventResponse(
                 request.conversationPublicId(),

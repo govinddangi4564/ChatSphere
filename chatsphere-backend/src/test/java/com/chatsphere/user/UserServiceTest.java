@@ -51,6 +51,9 @@ class UserServiceTest {
     @Mock
     private UserPrivacySettingRepository privacySettingRepository;
 
+    @Mock
+    private com.chatsphere.cache.service.RedisCacheService redisCacheService;
+
     private UserService userService;
 
     private User currentUser;
@@ -58,7 +61,7 @@ class UserServiceTest {
 
     @BeforeEach
     void setUp() {
-        userService = new UserService(userRepository, blockedUserRepository, userContactRepository, privacySettingRepository);
+        userService = new UserService(userRepository, blockedUserRepository, userContactRepository, privacySettingRepository, redisCacheService);
 
         currentUser = new User();
         currentUser.setId(1L);
@@ -79,6 +82,11 @@ class UserServiceTest {
     @Test
     void getMe_Success() {
         given(userRepository.findByUsername("alice")).willReturn(Optional.of(currentUser));
+        given(redisCacheService.getOrCompute(anyString(), any(), eq(UserResponse.class), any()))
+                .willAnswer(inv -> {
+                    java.util.function.Supplier<?> s = inv.getArgument(3);
+                    return s.get();
+                });
 
         UserResponse response = userService.getMe("alice");
 
